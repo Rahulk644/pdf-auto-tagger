@@ -440,6 +440,7 @@ class AutoTaggerPipeline:
         from tagger.stage8_semantic.toc_detector import detect_toc_entries
         from tagger.stage8_semantic.artifact_detector import detect_artifacts
         from tagger.stage8_semantic.caption_detector import detect_captions
+        from tagger.stage8_semantic.list_builder import build_list_structure
 
         logger.info("[Stage 8] Semantic refinement...")
 
@@ -462,6 +463,9 @@ class AutoTaggerPipeline:
 
         # 8d: Caption detection
         detect_captions(all_tagged)
+
+        # 8e: List structure
+        build_list_structure(all_tagged)
 
     def _stage10_write(self, input_pdf: str, output_pdf: str, doc_data: DocumentData):
         """Stage 10: Struct tree writeback."""

@@ -149,14 +149,50 @@ def tag_untagged_pdf(
 
             page_struct_parents = Array([])
 
-            for el in page_elements:
+            # Track consecutive LI elements for grouping into L
+            i = 0
+            while i < len(page_elements):
+                el = page_elements[i]
+
                 # Skip artifacts
                 if el.pdf_tag == PDFTag.ARTIFACT:
+                    i += 1
                     continue
 
-                tag_name = el.pdf_tag.value
+                # Check for list item run → wrap in L
+                if el.pdf_tag == PDFTag.LI:
+                    # Find all consecutive LI elements
+                    li_run = [el]
+                    j = i + 1
+                    while j < len(page_elements) and page_elements[j].pdf_tag == PDFTag.LI:
+                        li_run.append(page_elements[j])
+                        j += 1
 
-                # Ensure valid PDF struct tag name
+                    # Create L (list) container
+                    li_struct_elems = Array([])
+                    for li_el in li_run:
+                        li_struct = _build_list_item_struct(
+                            pdf, li_el, doc_elem, page.obj,
+                            mcid_counter,
+                        )
+                        li_struct_elems.append(li_struct)
+                        page_struct_parents.append(li_struct)
+                        mcid_counter += 1
+                        stats["total_elements_written"] += 1
+
+                    list_elem = pdf.make_indirect(Dictionary({
+                        "/Type": Name.StructElem,
+                        "/S": Name("/L"),
+                        "/P": doc_elem,
+                        "/K": li_struct_elems,
+                    }))
+                    doc_elem["/K"].append(list_elem)
+
+                    i = j
+                    continue
+
+                # Regular element
+                tag_name = el.pdf_tag.value
                 if tag_name not in WRITEBACK.tag_role_map:
                     tag_name = "P"
 
@@ -168,11 +204,9 @@ def tag_untagged_pdf(
                     "/Pg": page.obj,
                 }
 
-                # Add actual text
                 if el.text:
                     struct_elem_dict["/ActualText"] = String(el.text)
 
-                # Add alt text for figures
                 if el.pdf_tag == PDFTag.FIGURE and el.alt_text:
                     struct_elem_dict["/Alt"] = String(el.alt_text)
 
@@ -183,6 +217,7 @@ def tag_untagged_pdf(
 
                 mcid_counter += 1
                 stats["total_elements_written"] += 1
+                i += 1
 
             # Set page's StructParents
             page.obj["/StructParents"] = len(parent_map_entries)
@@ -231,6 +266,50 @@ def tag_untagged_pdf(
         shutil.copy2(str(input_path), str(output_path))
 
     return stats
+
+
+def _build_list_item_struct(
+    pdf,
+    el: TaggedElement,
+    parent,
+    page_obj,
+    mcid: int,
+):
+    """
+    Build a StructElem for a list item with Lbl + LBody children.
+
+    PDF/UA structure: LI > [ Lbl, LBody ]
+    """
+    label = el.specialist_data.get("list_label", "")
+    body = el.specialist_data.get("list_body", el.text)
+
+    children = Array([])
+
+    if label:
+        lbl = pdf.make_indirect(Dictionary({
+            "/Type": Name.StructElem,
+            "/S": Name("/Lbl"),
+            "/ActualText": String(label),
+        }))
+        children.append(lbl)
+
+    lbody = pdf.make_indirect(Dictionary({
+        "/Type": Name.StructElem,
+        "/S": Name("/LBody"),
+        "/ActualText": String(body or ""),
+    }))
+    children.append(lbody)
+
+    li_elem = pdf.make_indirect(Dictionary({
+        "/Type": Name.StructElem,
+        "/S": Name("/LI"),
+        "/P": parent,
+        "/K": children if len(children) > 1 else children[0],
+        "/Pg": page_obj,
+        "/ActualText": String(el.text or ""),
+    }))
+
+    return li_elem
 
 
 def _walk_and_retag(
