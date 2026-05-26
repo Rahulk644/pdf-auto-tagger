@@ -423,8 +423,16 @@ class AutoTaggerPipeline:
 
     def _stage7_cross_page(self, doc_data: DocumentData):
         """Stage 7: Cross-page merge."""
-        logger.info("[Stage 7] Cross-page merge — basic implementation")
-        # TODO: Full cross-page table/list continuation in P9
+        from tagger.stage7_cross_page.cross_page_merger import merge_cross_page
+
+        logger.info("[Stage 7] Cross-page merge...")
+
+        all_tagged: list[TaggedElement] = []
+        for page_data in doc_data.pages.values():
+            all_tagged.extend(page_data.tagged_elements)
+
+        if all_tagged:
+            merge_cross_page(all_tagged, doc_data.num_pages)
 
     def _stage8_refine(self, doc_data: DocumentData):
         """Stage 8: Semantic refinement."""
@@ -457,12 +465,38 @@ class AutoTaggerPipeline:
 
     def _stage10_write(self, input_pdf: str, output_pdf: str, doc_data: DocumentData):
         """Stage 10: Struct tree writeback."""
-        logger.info("[Stage 10] Struct tree writeback — V1 (re-tag existing)")
-        # TODO: Full writeback in P11
-        # For now, just copy the input to output
-        import shutil
-        shutil.copy2(input_pdf, output_pdf)
-        logger.info("  Copied input to output (writeback not yet implemented)")
+        from tagger.stage10_writeback.struct_tree_writer import (
+            retag_existing_pdf,
+            tag_untagged_pdf,
+        )
+
+        # Collect all tagged elements
+        all_tagged: list[TaggedElement] = []
+        for page_data in doc_data.pages.values():
+            all_tagged.extend(page_data.tagged_elements)
+
+        # Check if PDF is already tagged (any element has an MCID)
+        has_existing_tags = any(el.original_mcid is not None for el in all_tagged)
+
+        if has_existing_tags:
+            logger.info("[Stage 10] Re-tagging existing tagged PDF...")
+            stats = retag_existing_pdf(input_pdf, output_pdf, all_tagged)
+            logger.info(
+                "  Re-tag stats: %d matched, %d changed, %d unmatched",
+                stats.get("matched", 0),
+                stats.get("changed", 0),
+                stats.get("unmatched", 0),
+            )
+        else:
+            logger.info("[Stage 10] Building struct tree for untagged PDF...")
+            stats = tag_untagged_pdf(
+                input_pdf, output_pdf, all_tagged, doc_data.num_pages,
+            )
+            logger.info(
+                "  Writeback stats: %d elements written across %d pages",
+                stats.get("total_elements_written", 0),
+                stats.get("pages_modified", 0),
+            )
 
     # ------------------------------------------------------------------
     # Report generation
