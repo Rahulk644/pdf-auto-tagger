@@ -1,0 +1,9 @@
+{
+  "summary": {
+    "total_flagged_for_review": 0,
+    "review_threshold": 0.6,
+    "total_confidence_adjustments": 0
+  },
+  "review_queue": [],
+  "confidence_adjustments": []
+}

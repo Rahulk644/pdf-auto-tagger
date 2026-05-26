@@ -1,0 +1,220 @@
+{
+  "input_file": "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/nyvra-factsheet.pdf",
+  "total_pages": 2,
+  "page_types": {
+    "native": 2
+  },
+  "summary": {
+    "total_elements": 15,
+    "needs_review": 0,
+    "review_rate_percent": 0.0,
+    "total_time_seconds": 0.8
+  },
+  "tag_distribution": {
+    "P": 14,
+    "H1": 1
+  },
+  "stage_timings": {
+    "stage0": 0.4,
+    "stage1": 0.39,
+    "stage2": 0.0,
+    "stage3": 0.0,
+    "stage4_5": 0.0,
+    "stage6": 0.0,
+    "stage7": 0.0,
+    "stage8": 0.0,
+    "stage9": 0.0,
+    "stage10": 0.01
+  },
+  "elements": [
+    {
+      "element_id": "p1_e0",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "OFFICE OF THE NEW YORK STATE ATTORNEY GENERAL LETITIA JAMES",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e1",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "The New York Voting Rights Act “Your vote is precious, almost sacred. It is The John R. Lewis Voting Rights Act of New York the most powerful nonviolent tool we have (NYVRA) is a landmark law that adv",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 13.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e2",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "How does the NYVRA protect the right to vote? The NYVRA prohibits practices that harm New Yorkers’ The NYVRA also places new requirements on local voting rights. These practices include: jurisdictions",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e3",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "What is preclearance? How does preclearance work? To help prevent harm to voters in New York Under the NYVRA, certain local jurisdictions must communities with a history of violating voting or request",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e0",
+      "page_num": 2,
+      "pdf_tag": "H1",
+      "text": "How the administrative preclearance process works:",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Title",
+      "font_size": 21.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e1",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "1 A jurisdiction submits its proposed change to OAG. The proposal is published on the NYVRA Portal.",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 14.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e2",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "The public has an opportunity to provide feedback on the 2 proposed change. Individuals and groups can comment on how a proposed change will affect voting and elections in a speciﬁc community.",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 14.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e3",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "3 The OAG reviews the submission and comments from the public. It determines if the proposed change is permitted under the NYVRA.",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 14.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e4",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "The OAG publishes its determination. 4 If OAG grants preclearance, the jurisdiction can make the change. If OAG denies preclearance, the jurisdiction cannot make the change but may appeal the denial i",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e5",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "How can I get involved? We want to hear from you! Public comments on preclearance submissions give us important information about how a change could help or harm voters. Visit our NYVRA Portal to view",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 15.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e6",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Visit NYVRA Portal Learn about NYVRA",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e7",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Subscribe to receive submission updates. View key voting dates and resources.",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 15.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e8",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Subscribe for updates View voting resources",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e9",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "If you have any questions regarding preclearance, contact: votingrights@ag.ny.gov",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e10",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Experiencing problems voting? Visit ag.ny.gov/voter-complaint or call 1-212-416-9818.",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "bold"
+    }
+  ],
+  "confidence_report": {
+    "summary": {
+      "total_flagged_for_review": 0,
+      "review_threshold": 0.6,
+      "total_confidence_adjustments": 0
+    },
+    "review_queue": [],
+    "confidence_adjustments": []
+  }
+}

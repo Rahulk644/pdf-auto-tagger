@@ -1,17 +1,32 @@
 """
 Stage 5d — Formula extractor.
 
-Stub for UniMERNet formula-to-LaTeX extraction.
-Deferred to quality-upgrade phase — requires Conda + heavy deps.
+Two modes:
+  1. Raw text mode (default): Uses pdfplumber text with heuristic
+     LaTeX detection. Low confidence — flags for review.
 
-For now, formula regions are tagged as FORMULA with the raw text
-content from pdfplumber (which may be garbled for math).
+  2. UniMERNet mode (optional): Subprocess-based image→LaTeX via
+     UniMERNet. Requires Python <3.14 venv + unimernet package.
+
+Raw text mode is always available. UniMERNet integration is designed
+to work via the same subprocess pattern as MinerU.
 """
 
 from __future__ import annotations
 
+import gc
+import json
 import logging
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
+from PIL import Image
+
+from tagger.config import FORMULA
 from tagger.models.data_types import FormulaResult, LayoutRegion, PageElement
 
 logger = logging.getLogger(__name__)
@@ -20,21 +35,36 @@ logger = logging.getLogger(__name__)
 def extract_formula(
     region: LayoutRegion,
     matched_elements: list[PageElement],
+    page_image: Image.Image | None = None,
+    use_vlm: bool = False,
 ) -> FormulaResult:
     """
     Extract formula content from a region.
 
-    Currently uses raw text from pdfplumber. UniMERNet integration
-    will replace this with proper LaTeX extraction.
-
     Args:
         region: Layout region classified as FORMULA.
         matched_elements: PageElements that overlap this region.
+        page_image: Full page image (needed for UniMERNet mode).
+        use_vlm: If True, try UniMERNet for image→LaTeX.
 
     Returns:
         FormulaResult with LaTeX string.
     """
-    # For now, concatenate raw text from matched elements
+    # Try UniMERNet if requested and available
+    if use_vlm and page_image is not None:
+        result = _try_unimernet(region, page_image)
+        if result is not None:
+            return result
+
+    # Fallback: raw text extraction
+    return _extract_raw_text(region, matched_elements)
+
+
+def _extract_raw_text(
+    region: LayoutRegion,
+    matched_elements: list[PageElement],
+) -> FormulaResult:
+    """Extract formula content from raw text (fallback)."""
     raw_text = " ".join(el.text for el in matched_elements if el.text).strip()
 
     if not raw_text:
@@ -47,14 +77,112 @@ def extract_formula(
         )
 
     # Check if the text already looks like LaTeX
-    is_latex = any(c in raw_text for c in ("\\", "^", "_", "{", "}"))
+    latex_chars = {"\\", "^", "_", "{", "}", "\\frac", "\\sum", "\\int"}
+    is_latex = any(c in raw_text for c in latex_chars)
+
+    # Simple cleanup for common math font issues
+    cleaned = raw_text
+    if not is_latex:
+        # Wrap in \text{} if it doesn't look like LaTeX
+        cleaned = f"\\text{{{raw_text}}}"
 
     return FormulaResult(
         region_id=region.region_id,
-        latex=raw_text if is_latex else f"\\text{{{raw_text}}}",
+        latex=cleaned if is_latex else f"\\text{{{raw_text}}}",
         is_inline=_is_inline_formula(region),
         confidence=0.4 if is_latex else 0.2,
     )
+
+
+def _try_unimernet(
+    region: LayoutRegion,
+    page_image: Image.Image,
+) -> FormulaResult | None:
+    """
+    Try UniMERNet formula extraction via subprocess.
+
+    Returns None if UniMERNet is not available.
+    """
+    # Check if we have a compatible Python
+    py_bin = _find_unimernet_python()
+    if py_bin is None:
+        return None
+
+    # Crop formula region from page image
+    x0, y0, x1, y1 = region.bbox
+    x0 = max(0, int(x0))
+    y0 = max(0, int(y0))
+    x1 = min(page_image.width, int(x1))
+    y1 = min(page_image.height, int(y1))
+
+    if x1 <= x0 or y1 <= y0:
+        return None
+
+    crop = page_image.crop((x0, y0, x1, y1))
+
+    # Save to temp file
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        crop.save(f.name)
+        img_path = f.name
+
+    try:
+        # Run UniMERNet via subprocess
+        script = (
+            "import sys, json\n"
+            "import os\n"
+            "os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'\n"
+            "from unimernet.common.config import Config\n"
+            "from unimernet.processors import load_processor\n"
+            "from unimernet.models import load_model\n"
+            "from PIL import Image\n"
+            f"img = Image.open('{img_path}').convert('RGB')\n"
+            f"model_name = '{FORMULA.model_name}'\n"
+            "cfg = Config({'model': {'name': model_name}})\n"
+            "model = load_model(cfg)\n"
+            "processor = load_processor(cfg)\n"
+            "inputs = processor(img)\n"
+            "result = model.generate(inputs)\n"
+            "print(json.dumps({'latex': result, 'status': 'ok'}))\n"
+        )
+
+        result = subprocess.run(
+            [py_bin, "-c", script],
+            capture_output=True, text=True, timeout=60,
+        )
+
+        if result.returncode == 0:
+            output = json.loads(result.stdout.strip())
+            latex = output.get("latex", "")
+            if latex:
+                return FormulaResult(
+                    region_id=region.region_id,
+                    latex=latex,
+                    is_inline=_is_inline_formula(region),
+                    confidence=0.85,
+                )
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
+        logger.debug("UniMERNet failed for %s: %s", region.region_id, e)
+
+    finally:
+        if os.path.exists(img_path):
+            os.unlink(img_path)
+
+    return None
+
+
+def _find_unimernet_python() -> str | None:
+    """Find a Python with unimernet installed."""
+    import sys
+    candidates = [sys.executable, str(Path.home() / ".tagger" / "unimernet_venv" / "bin" / "python")]
+    for py_bin in candidates:
+        if os.path.exists(py_bin):
+            result = subprocess.run(
+                [py_bin, "-c", "import unimernet; print('ok')"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and "ok" in result.stdout:
+                return py_bin
+    return None
 
 
 def _is_inline_formula(region: LayoutRegion) -> bool:

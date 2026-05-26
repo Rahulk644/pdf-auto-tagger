@@ -1,0 +1,257 @@
+{
+  "input_file": "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/Osteoarthritis.pdf",
+  "total_pages": 5,
+  "page_types": {
+    "native": 5
+  },
+  "summary": {
+    "total_elements": 18,
+    "needs_review": 0,
+    "review_rate_percent": 0.0,
+    "total_time_seconds": 0.85
+  },
+  "tag_distribution": {
+    "P": 14,
+    "H1": 1,
+    "Artifact": 3
+  },
+  "stage_timings": {
+    "stage0": 0.32,
+    "stage1": 0.48,
+    "stage2": 0.02,
+    "stage3": 0.0,
+    "stage4_5": 0.0,
+    "stage6": 0.0,
+    "stage7": 0.0,
+    "stage8": 0.0,
+    "stage9": 0.0,
+    "stage10": 0.02
+  },
+  "elements": [
+    {
+      "element_id": "p1_e0",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "PATIENTEDUCATION BY ANNE WOODS, RN, CRNP, APRN,BC, MSN Clinical Director LPN2006",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 8.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e1",
+      "page_num": 1,
+      "pdf_tag": "H1",
+      "text": "Osteoarthritis",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Title",
+      "font_size": 34.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e2",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "What causes arthritis? The most common type of arthritis, called osteoarthritis, is caused by the breakdown of cartilage, the smooth mater- ial covering the ends of bones in your joints. Cartilage pro",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e3",
+      "page_num": 1,
+      "pdf_tag": "Artifact",
+      "text": "30 LPN2006 l Volume 2, Number 1",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 8.000000000000002,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e0",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "How does my arthritis medicine help me? Find your arthritis medicine on this chart, then look across the table to ﬁnd out how it helps you and things you should look out for. New research shows that t",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 8.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e1",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "sit or lie down for 20 minutes. If you need to lift something, try doing so with an • Relax. Relaxation isn’t the same as rest. When you open palm. Clenching your ﬁngers around a heavy ob- relax, you ",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e2",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "This patient-education guide has been adapted for the 5th-grade level using the Flesch-Kincaid and SMOG formulas. upon request. Special thanks to Tracy Kane, MEd, patient-education coordinator, Albert",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 6.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e3",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "January/February l LPN2006 31",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 8.000000000000002,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p3_e0",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "grams/day (no more than 2.5 testinal bleeding, and serious skin or tramadol/acetaminophen (Ultra- grams/day if she has liver problems reactions associated with these cet). These drugs aren’t appropria",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p3_e1",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "Knee with osteoarthritis Knee with rheumatoid arthritis",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p3_e2",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "Erosion of cartilage Erosion of bone Pannus covers Joint space synovial narrowing membrane Osteophyte",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 8.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p3_e3",
+      "page_num": 3,
+      "pdf_tag": "Artifact",
+      "text": "32 LPN2006 l Volume 2, Number 1",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 8.000000000000002,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p4_e0",
+      "page_num": 4,
+      "pdf_tag": "P",
+      "text": "inﬂammation and damages bone dry conditions of the body’s mem- treating this disease. The patient’s and cartilage. branes. If a patient’s RF test is posi- rheumatologist will prescribe Like osteoarthr",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p4_e1",
+      "page_num": 4,
+      "pdf_tag": "P",
+      "text": "Rheumatoid arthritis can cause additional, more general signs of ill health, such as a persistent low fever, the anticyclic citrullinated peptide care provider may order a biologic loss of appetite, l",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p5_e0",
+      "page_num": 5,
+      "pdf_tag": "P",
+      "text": "and stop joint damage in some Living well 3ti0o3n8s,tNudoyv.eAmrbtherrit2is00a3n.d Rheumatism. 48(11):3031- patients with rheumatoid arthritis. Living with arthritis isn’t always Felson D, Anderson J.",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p5_e1",
+      "page_num": 5,
+      "pdf_tag": "P",
+      "text": "Earn CE credit online: Go to http://www.nursingcenter.com/ce/lpn and receive a certiﬁcate within minutes.",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 8.5,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p5_e2",
+      "page_num": 5,
+      "pdf_tag": "P",
+      "text": "INSTRUCTIONS Oh, those aching joints: Helping patients manage arthritis TEST INSTRUCTIONS • We also offer CE accounts for hospitals and other health care facilities • To take the test online, go to ou",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 7.0,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p5_e3",
+      "page_num": 5,
+      "pdf_tag": "Artifact",
+      "text": "34 LPN2006 l Volume 2, Number 1",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 7.999999999999998,
+      "font_weight": "bold"
+    }
+  ],
+  "confidence_report": {
+    "summary": {
+      "total_flagged_for_review": 0,
+      "review_threshold": 0.6,
+      "total_confidence_adjustments": 0
+    },
+    "review_queue": [],
+    "confidence_adjustments": []
+  }
+}

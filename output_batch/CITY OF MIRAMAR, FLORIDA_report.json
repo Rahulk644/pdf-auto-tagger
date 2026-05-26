@@ -1,0 +1,351 @@
+{
+  "input_file": "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/CITY OF MIRAMAR, FLORIDA.pdf",
+  "total_pages": 3,
+  "page_types": {
+    "native": 3
+  },
+  "summary": {
+    "total_elements": 26,
+    "needs_review": 0,
+    "review_rate_percent": 0.0,
+    "total_time_seconds": 2.09
+  },
+  "tag_distribution": {
+    "P": 26
+  },
+  "stage_timings": {
+    "stage0": 0.28,
+    "stage1": 0.24,
+    "stage2": 0.01,
+    "stage3": 0.0,
+    "stage4_5": 0.0,
+    "stage6": 0.0,
+    "stage7": 0.0,
+    "stage8": 0.0,
+    "stage9": 0.0,
+    "stage10": 1.55
+  },
+  "elements": [
+    {
+      "element_id": "p1_e0",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "CITY OF MIRAMAR, FLORIDA MANAGEMENT DISCUSSION AND ANALYSIS SEPTEMBER 30, 2017",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.039996231429768,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e1",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Other Information",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.9599966000942,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e2",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "In addition to the basic financial statements and accompanying notes, this report also presents certain required supplementary information (RSI) concerning the City’s progress in funding its obligatio",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.9599966000942,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e3",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Government-Wide Financial Analysis",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.9599966000942,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e4",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "The following schedule is a summary of the fiscal year 2017 Statement of Net Position with comparative information for fiscal year 2016:",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.9599966000942,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e5",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Net Position (in thousands) Fiscal Years 2017 and 2016",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.391196794257496,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e6",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Governmental Business-Type Activities Activities Total 2017 2016 2017 2016 2017 2016 Current and other assets $ 126,135 $ 112,340 $ 72,738 $ 64,218 $ 198,873 $ 176,558 Capital assets 273,086 260,001 2",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.391196794257553,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e7",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Deferred inflows of resources 17,825 10,723 1,782 1,530 19,607 12,253",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.391196794257553,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e8",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Net Position: N et I nv es t ment i n 132,029 127,446 231,706 229,158 363,735 356,604 Restricted 16,145 21,088 4,804 4,469 20,949 25,557 Unrestricted (130,798) (126,334) 45,529 38,952 (85,269) (87,382",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.391196794257525,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e9",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "The overall net position of the City increased in fiscal year 2017, from the prior fiscal year net position, by approximately $4.64 million or 1.57% from $294.78 million in 2016 to $299.42 million in ",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.959996600094257,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e10",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "7",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.959996600094243,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e0",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "CITY OF MIRAMAR, FLORIDA MANAGEMENT DISCUSSION AND ANALYSIS SEPTEMBER 30, 2017",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.039999513820476,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e1",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Governmental Funds (Continued) Major Fund Information",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.95999956138155,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e2",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "General Fund, State Grant Fund:",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.944199562077301,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e3",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Fiscal Year 2017 Revenues $ 144,944 Expenditures (144,917) Other financing sources (1,973) Increase (decrease) in fund balance $ (1,946)",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.944199562077301,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e4",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "General Fund, CIP Bonds 2013 Fund, and Debt Service Fund:",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.944199562077301,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e5",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Fiscal Year 2016 Revenues $ 132,107 Expenditures (145,457) Other financing sources 4,458 Increase (decrease) in fund balance $ (8,892)",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.944199562077301,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e6",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "The General Fund is the chief operating fund of the City. Additionally, in fiscal year 2017, the State Grant fund, a special revenue fund established to account for revenues and expenditures associate",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.95999956138155,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e7",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "14",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.959999561381522,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p3_e0",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "CITY OF MIRAMAR, FLORIDA NOTES TO BASIC FINANCIAL STATEMENTS SEPTEMBER 30, 2017",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.040000561060879,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p3_e1",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "NOTE 9. LONG-TERM OBLIGATIONS (Continued)",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.040000561060765,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p3_e2",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "Annual minimum lease payments and the present value of minimum lease payments follows:",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.960000506174424,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p3_e3",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "Governmental Fiscal Year Ended Activities 2018 $ 1,033,281 2019 1,023,410 2020 969,625 2021 940,010 2022 940,009 2023-2024 786,005 Total minimum lease payments 5,692,340 Less amount representing inter",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.358900475626115,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p3_e4",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "The net book value of assets acquired through capital leases as of September 30, 2017, follows:",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.960000506174424,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p3_e5",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "Assets: Equipment $5,935,009 Less accumulated depreciation (236,725) Total net book value $5,698,284",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.356600475509197,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p3_e6",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "70",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.960000506174424,
+      "font_weight": "normal"
+    }
+  ],
+  "confidence_report": {
+    "summary": {
+      "total_flagged_for_review": 0,
+      "review_threshold": 0.6,
+      "total_confidence_adjustments": 0
+    },
+    "review_queue": [],
+    "confidence_adjustments": []
+  }
+}

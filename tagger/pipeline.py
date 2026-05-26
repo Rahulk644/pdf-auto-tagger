@@ -1,3 +1,4 @@
+
 """
 Pipeline orchestrator — runs stages 0→10 sequentially.
 
@@ -130,10 +131,9 @@ class AutoTaggerPipeline:
         self._timed("stage8", self._stage8_refine, doc_data)
 
         # ------------------------------------------------------------------
-        # Stage 9: Alt text for figures (loads Qwen, unloads after)
+        # Stage 9: Alt text for figures
         # ------------------------------------------------------------------
-        # Deferred — requires Qwen2.5-VL model
-        logger.info("[Stage 9] Alt text generation — DEFERRED (model not yet integrated)")
+        self._timed("stage9", self._stage9_alttext, input_pdf, doc_data)
 
         # ------------------------------------------------------------------
         # Stage 10: Write to PDF
@@ -325,7 +325,6 @@ class AutoTaggerPipeline:
         """Stage 4+5: Route regions and create initial tagged elements."""
         logger.info("[Stage 4+5] Routing and initial tagging...")
 
-        # Map layout categories to initial PDF tags
         category_to_tag: dict[LayoutCategory, PDFTag] = {
             LayoutCategory.TITLE:          PDFTag.H1,
             LayoutCategory.SECTION_HEADER: PDFTag.H2,
@@ -334,7 +333,7 @@ class AutoTaggerPipeline:
             LayoutCategory.TABLE:          PDFTag.TABLE,
             LayoutCategory.FORMULA:        PDFTag.FORMULA,
             LayoutCategory.PICTURE:        PDFTag.FIGURE,
-            LayoutCategory.CAPTION:        PDFTag.P,  # refined in Stage 8
+            LayoutCategory.CAPTION:        PDFTag.P,
             LayoutCategory.FOOTNOTE:       PDFTag.NOTE,
             LayoutCategory.PAGE_HEADER:    PDFTag.ARTIFACT,
             LayoutCategory.PAGE_FOOTER:    PDFTag.ARTIFACT,
@@ -343,66 +342,52 @@ class AutoTaggerPipeline:
         total_tagged = 0
         for page_num, page_data in doc_data.pages.items():
             tagged: list[TaggedElement] = []
+            
+            el_to_cat = {}
+            if page_data.layout_regions and not page_data.layout_regions[0].matched_elements:
+                for el in page_data.elements:
+                    ex0, ey0, ex1, ey1 = el.bbox
+                    ecx, ecy = (ex0 + ex1)/2, (ey0 + ey1)/2
+                    
+                    best_region = None
+                    best_dist = float('inf')
+                    for region in page_data.layout_regions:
+                        rx0, ry0, rx1, ry1 = region.bbox
+                        rcx, rcy = (rx0 + rx1)/2, (ry0 + ry1)/2
+                        dist = (ecx - rcx)**2 + (ecy - rcy)**2
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_region = region
+                            
+                    if best_region:
+                        el_to_cat[el.element_id] = (best_region.category, best_region.confidence)
+            else:
+                for region in page_data.layout_regions:
+                    for eid in (region.matched_elements or []):
+                        el_to_cat[eid] = (region.category, region.confidence)
 
-            # Match elements to regions
-            element_map = {el.element_id: el for el in page_data.elements}
-
-            for region in page_data.layout_regions:
-                # Find elements within this region
-                matched_els = []
-                if region.matched_elements:
-                    matched_els = [
-                        element_map[eid] for eid in region.matched_elements
-                        if eid in element_map
-                    ]
-                else:
-                    # Fall back to spatial matching
-                    from tagger.stage1_extraction.coord_transformer import bbox_contains
-                    matched_els = [
-                        el for el in page_data.elements
-                        if bbox_contains(region.bbox, el.bbox, tolerance=5.0)
-                    ]
-
-                pdf_tag = category_to_tag.get(region.category, PDFTag.P)
-
-                for el in matched_els:
-                    tagged_el = TaggedElement(
-                        element_id=el.element_id,
-                        page_num=page_num,
-                        pdf_tag=pdf_tag,
-                        text=el.text,
-                        bbox=el.bbox,
-                        confidence=region.confidence,
-                        original_mcid=el.mcid,
-                        font_name=el.font_name,
-                        font_size=el.font_size,
-                        font_weight=el.font_weight,
-                        merged_from=el.merged_from,
-                        layout_category=region.category.value,
-                    )
-                    tagged.append(tagged_el)
-
-                # If region has no matched elements (e.g., figures),
-                # create a tagged element for the region itself
-                if not matched_els and region.category in (
-                    LayoutCategory.PICTURE,
-                    LayoutCategory.TABLE,
-                    LayoutCategory.FORMULA,
-                ):
-                    tagged.append(TaggedElement(
-                        element_id=region.region_id,
-                        page_num=page_num,
-                        pdf_tag=pdf_tag,
-                        text="",
-                        bbox=region.bbox,
-                        confidence=region.confidence,
-                        layout_category=region.category.value,
-                    ))
+            for el in page_data.elements:
+                cat, conf = el_to_cat.get(el.element_id, (LayoutCategory.TEXT, 1.0))
+                pdf_tag = category_to_tag.get(cat, PDFTag.P)
+                tagged_el = TaggedElement(
+                    element_id=el.element_id,
+                    page_num=page_num,
+                    pdf_tag=pdf_tag,
+                    text=el.text,
+                    bbox=el.bbox,
+                    confidence=conf,
+                    original_mcid=el.mcid,
+                    font_name=el.font_name,
+                    font_size=el.font_size,
+                    font_weight=el.font_weight,
+                    layout_category=cat.value if isinstance(cat, LayoutCategory) else str(cat),
+                )
+                tagged.append(tagged_el)
+                total_tagged += 1
 
             page_data.tagged_elements = tagged
-            total_tagged += len(tagged)
 
-        logger.info("  Created %d initial tagged elements", total_tagged)
+        logger.debug(f"Created {total_tagged} initially tagged elements.")
 
     def _stage6_validate(self, doc_data: DocumentData):
         """Stage 6: Consistency validation."""
@@ -466,6 +451,19 @@ class AutoTaggerPipeline:
 
         # 8e: List structure
         build_list_structure(all_tagged)
+
+    def _stage9_alttext(self, input_pdf: str, doc_data: DocumentData):
+        """Stage 9: Alt text for figure elements."""
+        from tagger.stage9_alttext.alt_text_generator import generate_alt_text_placeholders
+
+        logger.info("[Stage 9] Alt text generation (placeholder mode)...")
+
+        all_tagged: list[TaggedElement] = []
+        for page_data in doc_data.pages.values():
+            all_tagged.extend(page_data.tagged_elements)
+
+        count = generate_alt_text_placeholders(all_tagged, input_pdf)
+        logger.info("  Generated %d placeholder alt texts", count)
 
     def _stage10_write(self, input_pdf: str, output_pdf: str, doc_data: DocumentData):
         """Stage 10: Struct tree writeback."""

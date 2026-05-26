@@ -1,0 +1,352 @@
+{
+  "input_file": "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/Summary of Revenues and Expenditures.pdf",
+  "total_pages": 5,
+  "page_types": {
+    "native": 5
+  },
+  "summary": {
+    "total_elements": 26,
+    "needs_review": 0,
+    "review_rate_percent": 0.0,
+    "total_time_seconds": 1.01
+  },
+  "tag_distribution": {
+    "P": 17,
+    "Artifact": 9
+  },
+  "stage_timings": {
+    "stage0": 0.41,
+    "stage1": 0.51,
+    "stage2": 0.02,
+    "stage3": 0.0,
+    "stage4_5": 0.0,
+    "stage6": 0.0,
+    "stage7": 0.0,
+    "stage8": 0.0,
+    "stage9": 0.0,
+    "stage10": 0.06
+  },
+  "elements": [
+    {
+      "element_id": "p1_e0",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "City of Deerfield Beach Summary of Revenues and Expenditures For the Month Ended May 31, 2025",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066699999999969,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e1",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "The FY25 Adopted Budget includes authorized encumbrances and carryforward of funding to fulfill outstanding purchase orders. Below is a summary of the monthly financial reporting of revenues and expen",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066700000000083,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e2",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Budget to Actual $- $100,000,000 $200,000,000 $300,000,000 $400,000,000 $500,000,000 $404,171,036 Total Revenues $184,710,743 $404,171,036 Total Expenditures $160,744,393",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.066696703341336,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e3",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Budget YTD Actual",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.066690097491119,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e4",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "General Fund Revenues  General Fund revenues are at 70% of the budget or $116.4M at 05/31/25, up by $5.1M from FY24, which reported 76% of the budget or $111.3M at 05/31/24. o Ad valorem taxes includ",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066687913122223,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e5",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Expenditures  General Fund year-to-date actual operating expenditures are at 55% of the budget and at 68% including encumbrances.",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066687913122223,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p1_e6",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "Utilities Fund Revenues  Utilities Fund revenues are at 56% of the budget or $20.6M, up by $.1M from FY24, which reported 50% of the budget or $20.5M at 05/31/24. o Water and sewer sales reporting 67",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066687913122195,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p1_e7",
+      "page_num": 1,
+      "pdf_tag": "P",
+      "text": "3",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.999926893851985,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e0",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "City of Deerfield Beach Summary of Revenues and Expenditures For the Month Ended May 31, 2025 Expenditures  Utilities Fund year-to-date actual operating expenditures are at 53% of the budget and at 5",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066700000000083,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e1",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Solid Waste Fund Revenues  Solid Waste Fund revenues are at 63% of the budget or $16.3M down $1.7M from FY24, which reported 68% of the budget or $18.0M at 05/31/24. The difference in revenue was due",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066700000000083,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e2",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "Total Revenues Total Expenditures 180000000 180000000 150000000 150000000 120000000 120000000 90000000 90000000 60000000 60000000 30000000 30000000 0 001 - GENERAL 401 - UTILITIES 450 - SOLID WASTE 0 ",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 9.066700000000026,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p2_e3",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "In general, revenue streams across all funds are accrued to the prior fiscal year and/or lag a month or more. Overall, total actual revenues are 46% of the budget, primarily due to ad valorem tax reve",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066700000000026,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e4",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "The year-to-date actual expenditures are at 40% of the budget and at 56% including encumbrances. In some cases, the percentage of budget utilized may exceed the percentage of the budget lapse, which i",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 11.066700000000026,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p2_e5",
+      "page_num": 2,
+      "pdf_tag": "P",
+      "text": "4",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p3_e0",
+      "page_num": 3,
+      "pdf_tag": "Artifact",
+      "text": "City of Deerfield Beach Budget to Actual Revenue Report For the month ended May 31, 2025",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Title",
+      "font_size": 16.064499999999953,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p3_e1",
+      "page_num": 3,
+      "pdf_tag": "P",
+      "text": "Fund Revenue Source Revised Budget YTD Actual Balance % Rev GENERAL FUND AD VALOREM TAXES 64,733,073 62,516,235 2,216,838 97% ADMINISTRATIVE FEES 8,079,662 5,386,441 2,693,221 67% COMMUNICATIONS SVCS ",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.064499999999953,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p3_e2",
+      "page_num": 3,
+      "pdf_tag": "Artifact",
+      "text": "2/13/2025 3:07:11 PM",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.064499999999995,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p3_e3",
+      "page_num": 3,
+      "pdf_tag": "Artifact",
+      "text": "5",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p4_e0",
+      "page_num": 4,
+      "pdf_tag": "Artifact",
+      "text": "City of Deerfield Beach Budget to Actual Revenue Report For the month ended May 31, 2025",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Title",
+      "font_size": 16.064499999999953,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p4_e1",
+      "page_num": 4,
+      "pdf_tag": "P",
+      "text": "STATE SHARED REVENUE 561,786 370,400 191,386 66% TRANSFERS IN - 271,369 (271,369) 0% Fund Total 10,418,442 1,777,611 8,640,831 17% IMPACT FEES CULTURE RECREATION 150,000 11,228 138,772 7% IMPACT FEES ",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.064499999999953,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p4_e2",
+      "page_num": 4,
+      "pdf_tag": "Artifact",
+      "text": "2/13/2025 3:07:11 PM",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.064499999999995,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p4_e3",
+      "page_num": 4,
+      "pdf_tag": "Artifact",
+      "text": "6",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p5_e0",
+      "page_num": 5,
+      "pdf_tag": "Artifact",
+      "text": "City of Deerfield Beach Budget to Actual Revenue Report For the month ended May 31, 2025",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Title",
+      "font_size": 16.064499999999953,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p5_e1",
+      "page_num": 5,
+      "pdf_tag": "P",
+      "text": "INTEREST, EARNINGS - 2,931 (2,931) 0% Fund Total - 2,931 (2,931) 0% 2018 BOND FUND DEBT PROCEEDS 7,574,526 - 7,574,526 0% GRANTS FROM OTHER LO - 150,000 (150,000) 0% INTEREST, EARNINGS - 459,649 (459,",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.064499999999953,
+      "font_weight": "bold"
+    },
+    {
+      "element_id": "p5_e2",
+      "page_num": 5,
+      "pdf_tag": "Artifact",
+      "text": "2/13/2025 3:07:11 PM",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 10.064499999999995,
+      "font_weight": "normal"
+    },
+    {
+      "element_id": "p5_e3",
+      "page_num": 5,
+      "pdf_tag": "Artifact",
+      "text": "7",
+      "confidence": 0.5,
+      "needs_review": false,
+      "review_reason": null,
+      "layout_category": "Text",
+      "font_size": 12.0,
+      "font_weight": "normal"
+    }
+  ],
+  "confidence_report": {
+    "summary": {
+      "total_flagged_for_review": 0,
+      "review_threshold": 0.6,
+      "total_confidence_adjustments": 0
+    },
+    "review_queue": [],
+    "confidence_adjustments": []
+  }
+}
