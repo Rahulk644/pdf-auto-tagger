@@ -217,6 +217,10 @@ class SemanticConfig:
     # Maximum heading levels (H1–H6)
     max_heading_levels: int = 6
 
+    # Heading rarity: a font size occurring in more than this fraction of all
+    # document elements is treated as body text, not a distinct heading level.
+    heading_body_frequency_fraction: float = 0.10
+
     # TOC: pages in the first N% of the document are candidates
     toc_page_fraction: float = 0.10
 

@@ -1,41 +1,45 @@
 """
 Stage 8a — Heading level ranker.
 
-Assigns heading levels (H1–H6) based on font size ranking.
+Assigns heading levels (H1–H6) using document-wide font rarity and full text
+style (size + weight + color), not raw font-size ranking alone.
+
 No LLM needed — pure algorithmic approach using pdfplumber font metadata.
 
 Algorithm:
-  1. Collect all elements classified as headings (Title, Section-header)
-  2. Extract unique font sizes
-  3. Merge sizes within 1pt tolerance
-  4. Rank: largest → H1, second → H2, etc. (max H6)
+  1. Build a document-wide frequency map of font sizes across ALL elements.
+     A size occurring in more than `heading_body_frequency_fraction` of
+     elements is "body-common" — it does not anchor a distinct heading level.
+  2. Group heading elements by TextStyle tuple (size bucket + weight + color).
+  3. Order the rare ("structural") styles by size desc, bold-first, and assign
+     H1, H2, … sequentially (clamped to H6).
+  4. Body-common heading styles fold into the deepest structural level so they
+     do not inflate the hierarchy (the failure mode on multi-size documents).
 """
 
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+from collections import Counter
 
 from tagger.config import SEMANTIC
 from tagger.models.data_types import PDFTag, TaggedElement
 
 logger = logging.getLogger(__name__)
 
+_HEADING_TAGS = (PDFTag.H1, PDFTag.H2, PDFTag.H3, PDFTag.H4, PDFTag.H5, PDFTag.H6)
+
 
 def assign_heading_levels(elements: list[TaggedElement]) -> list[TaggedElement]:
     """
-    Assign H1–H6 tags based on font size ranking.
-
-    Elements that have layout_category in ("Title", "Section-header")
-    and currently have a generic heading tag are re-assigned.
+    Assign H1–H6 tags using font rarity + text style.
 
     Modifies elements in-place and returns the same list.
     """
-    # Collect heading elements
-    heading_tags = {PDFTag.H1, PDFTag.H2, PDFTag.H3, PDFTag.H4, PDFTag.H5, PDFTag.H6}
+    heading_set = set(_HEADING_TAGS)
     headings = [
         el for el in elements
-        if el.pdf_tag in heading_tags
+        if el.pdf_tag in heading_set
         and el.font_size is not None
         and el.font_size > 0
     ]
@@ -44,73 +48,78 @@ def assign_heading_levels(elements: list[TaggedElement]) -> list[TaggedElement]:
         logger.debug("No headings with font size data to rank")
         return elements
 
-    # Collect unique font sizes
-    raw_sizes = sorted(
-        set(h.font_size for h in headings if h.font_size is not None),
-        reverse=True,
+    tol = SEMANTIC.heading_size_tolerance_pt
+
+    # 1. Document-wide font-size frequency (rarity signal)
+    size_freq: Counter[float] = Counter()
+    for el in elements:
+        if el.font_size is not None and el.font_size > 0:
+            size_freq[_bucket(el.font_size, tol)] += 1
+    total_sized = sum(size_freq.values())
+    body_threshold = total_sized * SEMANTIC.heading_body_frequency_fraction
+
+    # 2. Group headings by TextStyle tuple
+    styles: dict[tuple, float] = {}  # style key -> representative size bucket
+    for h in headings:
+        key = _style_key(h, tol)
+        styles.setdefault(key, key[0])
+
+    # 3. Rare ("structural") styles anchor the hierarchy
+    structural = sorted(
+        (k for k in styles if size_freq[k[0]] <= body_threshold),
+        key=lambda k: (-k[0], 0 if k[1] == "bold" else 1, k[2]),
     )
 
-    if not raw_sizes:
-        return elements
+    level_map: dict[tuple, PDFTag] = {}
+    if structural:
+        for idx, key in enumerate(structural):
+            level_map[key] = _HEADING_TAGS[min(idx, SEMANTIC.max_heading_levels - 1)]
+        deepest = level_map[structural[-1]]
+        # 4. Body-common heading styles fold into the deepest structural level
+        for key in styles:
+            level_map.setdefault(key, deepest)
+    else:
+        # Fallback: every heading size is body-common — rank distinct buckets by size
+        ordered = sorted(styles, key=lambda k: (-k[0], 0 if k[1] == "bold" else 1, k[2]))
+        for idx, key in enumerate(ordered):
+            level_map[key] = _HEADING_TAGS[min(idx, SEMANTIC.max_heading_levels - 1)]
 
-    # Merge sizes within tolerance
-    merged_sizes = _merge_similar_sizes(raw_sizes, SEMANTIC.heading_size_tolerance_pt)
-
-    # Build level map: largest → H1, second → H2, etc.
-    level_map: dict[float, PDFTag] = {}
-    heading_tags_ordered = [PDFTag.H1, PDFTag.H2, PDFTag.H3, PDFTag.H4, PDFTag.H5, PDFTag.H6]
-
-    for idx, size in enumerate(merged_sizes):
-        level_idx = min(idx, SEMANTIC.max_heading_levels - 1)
-        level_map[size] = heading_tags_ordered[level_idx]
-
-    # Assign levels
+    # Assign
     assigned_count = 0
     for el in headings:
-        closest_size = _find_closest(el.font_size, merged_sizes)
-        new_tag = level_map.get(closest_size, PDFTag.H6)
-
+        new_tag = level_map.get(_style_key(el, tol), PDFTag.H6)
         if el.pdf_tag != new_tag:
             logger.debug(
-                "Heading '%s...' (%.1fpt): %s → %s",
-                el.text[:30], el.font_size, el.pdf_tag.value, new_tag.value,
+                "Heading '%s...' (%.1fpt %s): %s → %s",
+                el.text[:30], el.font_size, el.font_weight or "normal",
+                el.pdf_tag.value, new_tag.value,
             )
             el.pdf_tag = new_tag
             assigned_count += 1
 
     logger.info(
-        "Heading ranker: %d unique sizes → %d levels, reassigned %d/%d headings",
-        len(raw_sizes), len(merged_sizes), assigned_count, len(headings),
+        "Heading ranker: %d styles (%d structural) → reassigned %d/%d headings",
+        len(styles), len(structural), assigned_count, len(headings),
     )
     return elements
 
 
-def _merge_similar_sizes(
-    sizes: list[float],
-    tolerance: float,
-) -> list[float]:
+def _bucket(size: float, tol: float) -> float:
+    """Round a font size to the nearest tolerance bucket so near-equal sizes merge."""
+    if tol <= 0:
+        return round(size, 1)
+    return round(size / tol) * tol
+
+
+def _style_key(el: TaggedElement, tol: float) -> tuple[float, str, str]:
+    """TextStyle tuple: (size bucket, weight, color).
+
+    font_color is not currently propagated onto TaggedElement, so it degrades
+    to "" today; read defensively so the tuple upgrades automatically if color
+    is added upstream later.
     """
-    Merge font sizes that are within `tolerance` points of each other.
-
-    Input must be sorted descending.
-    Returns merged sizes (descending), each representing a group.
-    """
-    if not sizes:
-        return []
-
-    merged: list[float] = [sizes[0]]
-
-    for size in sizes[1:]:
-        if merged[-1] - size <= tolerance:
-            # Within tolerance — merge (keep the larger size as representative)
-            continue
-        merged.append(size)
-
-    return merged
-
-
-def _find_closest(value: float, candidates: list[float]) -> float:
-    """Find the closest value in candidates to the given value."""
-    if not candidates:
-        return value
-    return min(candidates, key=lambda c: abs(c - value))
+    return (
+        _bucket(el.font_size, tol),
+        (el.font_weight or "normal").lower(),
+        (getattr(el, "font_color", None) or "").lower(),
+    )
