@@ -342,10 +342,52 @@ class AutoTaggerPipeline:
         SCALE = STANDARD_DPI / 72.0  # pdfplumber 72 DPI → standard 150 DPI
         CONTAINMENT_THRESHOLD = 0.7
         MIN_ROWS = 3
+        MIN_COLS = 2
+        MAX_AVG_CELL_LEN = 60   # cells longer than this are prose, not data
+        MIN_NUMERIC_RATIO = 0.20  # applied only when n_cols > 2
+        MAX_TOTAL_CELLS = 300   # pdfplumber fragments heading text into huge phantom grids
+        # If MinerU already classified the candidate area as prose/list, trust that
+        # judgment over pdfplumber's text-grid heuristic and skip injection.
+        # Use area COVERAGE (fraction of the candidate covered by the union of
+        # prose regions), not per-region IoU: MinerU fragments a page into many
+        # small text/list regions, and any single one has low IoU with a large
+        # candidate even when collectively they blanket it.
+        PROSE_CATEGORIES = (LayoutCategory.TEXT, LayoutCategory.LIST_ITEM)
+        PROSE_COVERAGE_THRESHOLD = 0.4
         TABLE_SETTINGS = {
             "vertical_strategy": "text",
             "horizontal_strategy": "text",
         }
+
+        def _is_numeric_cell(text: str) -> bool:
+            if not text or not text.strip():
+                return False
+            cleaned = (
+                text.strip()
+                .lstrip("$")
+                .replace(",", "")
+                .replace("(", "")
+                .replace(")", "")
+                .replace("%", "")
+                .replace("-", "")
+                .strip()
+            )
+            return bool(cleaned) and cleaned.replace(".", "").isdigit()
+
+        def _rect_union_area(rects):
+            """Exact union area of axis-aligned rects via coordinate compression."""
+            if not rects:
+                return 0.0
+            xs = sorted({r[0] for r in rects} | {r[2] for r in rects})
+            ys = sorted({r[1] for r in rects} | {r[3] for r in rects})
+            total = 0.0
+            for i in range(len(xs) - 1):
+                for j in range(len(ys) - 1):
+                    cx = (xs[i] + xs[i + 1]) / 2
+                    cy = (ys[j] + ys[j + 1]) / 2
+                    if any(r[0] <= cx <= r[2] and r[1] <= cy <= r[3] for r in rects):
+                        total += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j])
+            return total
 
         try:
             with pdfplumber.open(input_pdf) as pdf:
@@ -362,14 +404,62 @@ class AutoTaggerPipeline:
                         r for r in page_data.layout_regions
                         if r.category == LayoutCategory.TABLE
                     ]
+                    prose_regions = [
+                        r for r in page_data.layout_regions
+                        if r.category in PROSE_CATEGORIES
+                    ]
 
                     injected = 0
                     for table in found:
                         if len(table.rows) < MIN_ROWS:
                             continue
 
+                        rows_data = table.extract()
+                        if not rows_data:
+                            continue
+
+                        # Check 1: minimum columns
+                        n_cols = max((len(row) for row in rows_data), default=0)
+                        if n_cols < MIN_COLS:
+                            continue
+
+                        non_empty = [c for row in rows_data for c in row if c and c.strip()]
+
+                        # Check 3: average cell text length — prose paragraphs masquerading as cells
+                        if non_empty and (sum(len(c) for c in non_empty) / len(non_empty)) > MAX_AVG_CELL_LEN:
+                            continue
+
+                        # Check 4: grid size — pdfplumber fragments heading/paragraph text into
+                        # huge phantom grids (e.g. 53×10=530 cells); real tables stay under 300
+                        if len(table.rows) * n_cols > MAX_TOTAL_CELLS:
+                            continue
+
+                        # Check 2: numeric content ratio — only enforced for wide tables (>2 cols)
+                        if n_cols > 2 and non_empty:
+                            numeric_ratio = sum(1 for c in non_empty if _is_numeric_cell(c)) / len(non_empty)
+                            if numeric_ratio < MIN_NUMERIC_RATIO:
+                                continue
+
                         # Convert bbox to 150 DPI standard coords
                         x0, y0, x1, y1 = (v * SCALE for v in table.bbox)
+
+                        # Defer to MinerU: if it classified this area as text/list,
+                        # it already judged this is not a table — trust that and skip.
+                        cand_area = (x1 - x0) * (y1 - y0)
+                        clipped = []
+                        for pr in prose_regions:
+                            pb = pr.bbox
+                            cx0 = max(x0, pb[0]); cy0 = max(y0, pb[1])
+                            cx1 = min(x1, pb[2]); cy1 = min(y1, pb[3])
+                            if cx1 > cx0 and cy1 > cy0:
+                                clipped.append((cx0, cy0, cx1, cy1))
+                        coverage = _rect_union_area(clipped) / cand_area if cand_area > 0 else 0.0
+                        if coverage > PROSE_COVERAGE_THRESHOLD:
+                            logger.info(
+                                "  Page %d: pdfplumber fallback deferring to MinerU "
+                                "text/list (%.0f%% prose coverage)", page_num, coverage * 100,
+                            )
+                            continue
 
                         # Skip if any MinerU TABLE is already substantially
                         # contained within this pdfplumber bbox
