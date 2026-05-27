@@ -345,7 +345,6 @@ class AutoTaggerPipeline:
                 for region in table_regions:
                     table_struct = extract_table_native(
                         doc_data.input_path, page_num, region, page_data.classification,
-                        page_data.elements
                     )
                     if table_struct:
                         for el in tagged:

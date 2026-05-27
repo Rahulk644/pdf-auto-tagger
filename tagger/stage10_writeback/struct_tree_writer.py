@@ -25,6 +25,12 @@ from tagger.models.data_types import PDFTag, TaggedElement
 
 logger = logging.getLogger(__name__)
 
+def _is_numeric_content(text: str) -> bool:
+    """Return True if text is empty or contains only numeric/currency content."""
+    if not text:
+        return True
+    cleaned = text.strip().lstrip("$").replace(",", "").replace("(", "").replace(")", "").replace("%", "").replace("-", "").strip()
+    return not cleaned or cleaned.replace(".", "").isdigit()
 
 def retag_existing_pdf(
     input_path: str | Path,
@@ -251,7 +257,25 @@ def tag_untagged_pdf(
                             if not is_empty and (cell_mcid is None or cell_mcid not in injected_mcids):
                                 continue # Skip mapping non-empty cells that failed BDC injection
 
-                            td_tag = "TH" if cell.get("is_header") or cell.get("is_row_header") else "TD"
+                            # Dynamically determine row header status based on text content
+                            cell_text = cell.get("text", "")
+                            
+                            if not cell_text and cell.get("merged_from"):
+                                # pdfplumber failed to extract text, but the cell has physical characters.
+                                # Assume it is not numeric.
+                                is_numeric = False
+                            else:
+                                is_numeric = _is_numeric_content(cell_text)
+                                
+                            is_dynamic_row_header = (
+                                cell["col_idx"] == 0
+                                and not cell.get("is_header")
+                                and (bool(cell_text.strip()) or bool(cell.get("merged_from")))
+                                and not is_numeric
+                            )
+                            is_row_header = cell.get("is_row_header") or is_dynamic_row_header
+
+                            td_tag = "TH" if cell.get("is_header") or is_row_header else "TD"
 
                             td_elem_dict = {
                                 "/Type": Name.StructElem,
@@ -266,7 +290,7 @@ def tag_untagged_pdf(
                             if td_tag == "TH":
                                 if cell.get("is_header"):
                                     td_elem_dict["/A"] = Dictionary({"/O": Name("/Table"), "/Scope": Name("/Column")})
-                                elif cell.get("is_row_header"):
+                                elif is_row_header:
                                     td_elem_dict["/A"] = Dictionary({"/O": Name("/Table"), "/Scope": Name("/Row")})
 
                             if cell.get("text"):

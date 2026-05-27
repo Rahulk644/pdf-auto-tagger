@@ -122,12 +122,18 @@ def inject_bdc_markers(
             
         else:
             # Non-text operator
-            
-            # If we exit a text block, we must close any active BDC to respect PDF spec
+
+            # Strip any BDC/BMC/EMC from the original content stream — they conflict
+            # with the new MCID markers being injected and create phantom empty elements
+            # that pdfplumber reads as empty tagged spans.
+            if op in ("BDC", "BMC", "EMC"):
+                continue
+
+            # If we exit a text block, close any active BDC to respect PDF spec
             if op == "ET" and active_mcid is not None:
                 new_cs.append(pikepdf.ContentStreamInstruction(pikepdf._core._ObjectList([]), pikepdf.Operator("EMC")))
                 active_mcid = None
-                
+
             new_cs.append(instruction)
 
     # Close any lingering BDC at the end of the stream
