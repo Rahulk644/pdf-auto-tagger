@@ -66,18 +66,16 @@ class TextMergerConfig:
     # Horizontal gap (in standard-DPI points) below which adjacent chars
     # are merged into the same word.  Expressed as a multiplier of the
     # average character width on the line.
-    word_gap_multiplier: float = 1.5
+    word_gap_multiplier: float = 1.0
 
     # Vertical overlap fraction required for two words to be on the
     # "same line".  1.0 = perfect overlap, 0.5 = half overlap.
     line_overlap_threshold: float = 0.5
 
-    # Vertical gap between lines, expressed as a multiplier of the
-    # dominant line height.  Below this → same paragraph.
-    para_gap_same: float = 1.2
-
-    # Above this → new paragraph.
-    para_gap_new: float = 1.5
+    # Horizontal gap multiplier for words on the same line. If the gap between
+    # two words exceeds this multiple of the average character width, they are
+    # split into separate line elements (e.g. separate table cells).
+    line_gap_multiplier: float = 3.0
 
     # Tags that should NEVER be merged across MCIDs
     # (table cells, list labels, etc.)

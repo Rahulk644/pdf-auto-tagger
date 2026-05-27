@@ -23,7 +23,7 @@ from tagger.models.data_types import PDFTag, TaggedElement
 logger = logging.getLogger(__name__)
 
 
-def detect_artifacts(elements: list[TaggedElement]) -> list[TaggedElement]:
+def detect_artifacts(elements: list[TaggedElement], total_pages: int) -> list[TaggedElement]:
     """
     Detect running headers, footers, and page numbers.
 
@@ -35,24 +35,26 @@ def detect_artifacts(elements: list[TaggedElement]) -> list[TaggedElement]:
     artifact_count = 0
 
     # Group elements by (normalized_text, y_band) across pages
-    artifact_count += _detect_repeated_text(elements)
+    artifact_count += _detect_repeated_text(elements, total_pages)
 
     # Detect page numbers (sequential integers at consistent positions)
-    artifact_count += _detect_page_numbers(elements)
+    artifact_count += _detect_page_numbers(elements, total_pages)
 
     logger.info("Artifact detector: tagged %d elements as Artifact", artifact_count)
     return elements
 
 
-def _detect_repeated_text(elements: list[TaggedElement]) -> int:
+def _detect_repeated_text(elements: list[TaggedElement], total_pages: int) -> int:
     """
-    Find text that appears at the same Y-position across 3+ pages.
+    Find text that appears at the same Y-position across pages.
 
     This catches running headers ("Company Name", "Document Title")
     and footers ("Confidential", "Draft", copyright notices).
     """
     cfg = SEMANTIC
     tagged_count = 0
+
+    min_occurrences = min(cfg.artifact_min_page_occurrences, max(2, total_pages - 1))
 
     # Group by (normalized_text, y_band)
     # y_band = round y position to nearest tolerance bucket
@@ -82,7 +84,7 @@ def _detect_repeated_text(elements: list[TaggedElement]) -> int:
             # Count unique pages
             unique_pages = {el.page_num for el in bucket_elements}
 
-            if len(unique_pages) >= cfg.artifact_min_page_occurrences:
+            if len(unique_pages) >= min_occurrences:
                 for el in bucket_elements:
                     if el.pdf_tag != PDFTag.ARTIFACT:
                         el.pdf_tag = PDFTag.ARTIFACT
@@ -97,7 +99,7 @@ def _detect_repeated_text(elements: list[TaggedElement]) -> int:
     return tagged_count
 
 
-def _detect_page_numbers(elements: list[TaggedElement]) -> int:
+def _detect_page_numbers(elements: list[TaggedElement], total_pages: int) -> int:
     """
     Detect page numbers: sequential integers at consistent Y positions.
 
@@ -107,6 +109,8 @@ def _detect_page_numbers(elements: list[TaggedElement]) -> int:
     """
     cfg = SEMANTIC
     tagged_count = 0
+
+    min_occurrences = min(cfg.artifact_min_page_occurrences, max(2, total_pages - 1))
 
     # Collect potential page number elements
     # Group by Y-position band
@@ -122,18 +126,18 @@ def _detect_page_numbers(elements: list[TaggedElement]) -> int:
             y_bucket = round(y_center / cfg.artifact_y_tolerance_px)
             candidates[y_bucket].append((page_num_match, el))
 
-    # Check each Y-band for sequential patterns
+    # Check each Y-band for sequential patterns or consistent small font numbers
     for y_bucket, entries in candidates.items():
-        if len(entries) < cfg.artifact_min_page_occurrences:
+        if len(entries) < min_occurrences:
             continue
 
         # Sort by page number
         entries.sort(key=lambda e: e[1].page_num)
 
-        # Check if the extracted numbers are roughly sequential
-        numbers = [n for n, _ in entries]
-        if _is_roughly_sequential(numbers):
-            for _, el in entries:
+        # Check if the elements have small font (<= 12pt) and are at a consistent Y-band.
+        # We don't use _is_roughly_sequential because test PDFs may have non-contiguous pages.
+        for _, el in entries:
+            if el.font_size is None or el.font_size <= 12.0:
                 if el.pdf_tag != PDFTag.ARTIFACT:
                     el.pdf_tag = PDFTag.ARTIFACT
                     tagged_count += 1

@@ -166,14 +166,22 @@ def extract_table_native(
         return None
 
 
+def _is_numeric_content(text: str) -> bool:
+    """Return True if text is empty or contains only numeric/currency content."""
+    if not text:
+        return True
+    # Strip currency, commas, parens (negatives), percent, dashes, spaces
+    cleaned = text.strip().lstrip("$").replace(",", "").replace("(", "").replace(")", "").replace("%", "").replace("-", "").strip()
+    return not cleaned or cleaned.replace(".", "").isdigit()
+
+
 def _build_html(rows: list[list], has_header: bool) -> str:
     """Build an HTML table string from extracted rows."""
     parts = ["<table>"]
 
     for row_idx, row in enumerate(rows):
         parts.append("  <tr>")
-        tag = "th" if (has_header and row_idx == 0) else "td"
-        for cell in row:
+        for col_idx, cell in enumerate(row):
             cell_text = str(cell).strip() if cell is not None else ""
             # Escape HTML entities
             cell_text = (
@@ -182,7 +190,21 @@ def _build_html(rows: list[list], has_header: bool) -> str:
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
             )
-            parts.append(f"    <{tag}>{cell_text}</{tag}>")
+
+            is_header_row = has_header and row_idx == 0
+            is_row_header = (
+                col_idx == 0
+                and not is_header_row
+                and bool(cell_text)  # empty first-col cells are structural gaps, not labels
+                and not _is_numeric_content(cell_text)
+            )
+
+            if is_header_row:
+                parts.append(f'    <th scope="col">{cell_text}</th>')
+            elif is_row_header:
+                parts.append(f'    <th scope="row">{cell_text}</th>')
+            else:
+                parts.append(f"    <td>{cell_text}</td>")
         parts.append("  </tr>")
 
     parts.append("</table>")

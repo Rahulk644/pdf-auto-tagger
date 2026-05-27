@@ -170,107 +170,55 @@ def merge_words_to_lines(
             current_line = [word]
     lines.append(current_line)
 
-    # Merge each line's words into a single element
+    # Merge each line's words into a single element, splitting at large horizontal gaps
     merged_lines: list[PageElement] = []
-    for line_idx, line_words in enumerate(lines):
+    line_counter = 0
+
+    for line_words in lines:
         line_words.sort(key=lambda w: w.bbox[0])
-        line = _merge_elements(
-            line_words,
-            element_id=f"p{page_num}_l{line_idx}",
-            page_num=page_num,
-            join_with=" ",
-        )
-        merged_lines.append(line)
+        if not line_words:
+            continue
+
+        total_chars = sum(len(w.text) for w in line_words)
+        total_width = sum(w.width for w in line_words)
+        avg_char_width = (total_width / total_chars) if total_chars > 0 else 1.0
+        
+        max_gap = avg_char_width * TEXT_MERGER.line_gap_multiplier
+
+        current_chunk: list[PageElement] = [line_words[0]]
+
+        for word in line_words[1:]:
+            prev = current_chunk[-1]
+            gap = word.bbox[0] - prev.bbox[2]
+
+            if gap > max_gap:
+                line_elem = _merge_elements(
+                    current_chunk,
+                    element_id=f"p{page_num}_l{line_counter}",
+                    page_num=page_num,
+                    join_with=" ",
+                )
+                merged_lines.append(line_elem)
+                line_counter += 1
+                current_chunk = [word]
+            else:
+                current_chunk.append(word)
+
+        if current_chunk:
+            line_elem = _merge_elements(
+                current_chunk,
+                element_id=f"p{page_num}_l{line_counter}",
+                page_num=page_num,
+                join_with=" ",
+            )
+            merged_lines.append(line_elem)
+            line_counter += 1
 
     logger.debug(
-        "Page %d: %d words → %d lines",
+        "Page %d: %d words → %d line fragments",
         page_num, len(words), len(merged_lines),
     )
     return merged_lines
-
-
-def merge_lines_to_paragraphs(
-    lines: list[PageElement],
-    page_num: int,
-) -> list[PageElement]:
-    """
-    Pass 3: Merge consecutive lines into paragraphs.
-
-    Uses vertical gap analysis:
-      - Gap < para_gap_same * line_height → same paragraph
-      - Gap > para_gap_new * line_height → new paragraph
-
-    Args:
-        lines: Line-level PageElements from Pass 2, sorted top-to-bottom.
-        page_num: Page number for element ID generation.
-
-    Returns:
-        List of paragraph-level PageElements.
-    """
-    if not lines:
-        return []
-
-    # Sort by vertical position
-    sorted_lines = sorted(lines, key=lambda l: l.bbox[1])
-
-    # Compute dominant line height
-    line_heights = [l.height for l in sorted_lines if l.height > 0]
-    if not line_heights:
-        return sorted_lines  # Can't merge without height info
-
-    dominant_line_height = _median(line_heights)
-    if dominant_line_height <= 0:
-        return sorted_lines
-
-    para_gap_same = TEXT_MERGER.para_gap_same * dominant_line_height
-    para_gap_new = TEXT_MERGER.para_gap_new * dominant_line_height
-
-    paragraphs: list[list[PageElement]] = []
-    current_para: list[PageElement] = [sorted_lines[0]]
-
-    for line in sorted_lines[1:]:
-        prev_line = current_para[-1]
-        # Vertical gap between bottom of prev line and top of current line
-        gap = line.bbox[1] - prev_line.bbox[3]
-
-        if gap < para_gap_same:
-            # Same paragraph
-            current_para.append(line)
-        elif gap >= para_gap_new:
-            # New paragraph
-            paragraphs.append(current_para)
-            current_para = [line]
-        else:
-            # Ambiguous gap — lean toward same paragraph if font matches
-            if (
-                line.font_size is not None
-                and prev_line.font_size is not None
-                and abs(line.font_size - prev_line.font_size) < 1.0
-                and line.font_name == prev_line.font_name
-            ):
-                current_para.append(line)
-            else:
-                paragraphs.append(current_para)
-                current_para = [line]
-
-    paragraphs.append(current_para)
-
-    # Merge each paragraph's lines
-    merged_paras: list[PageElement] = []
-    for para_idx, para_lines in enumerate(paragraphs):
-        para = _merge_elements(
-            para_lines,
-            element_id=f"p{page_num}_e{para_idx}",
-            page_num=page_num,
-            join_with=" ",
-        )
-        merged_paras.append(para)
-
-    logger.debug(
-        "Page %d: %d lines → %d paragraphs",
-        page_num, len(lines), len(merged_paras),
-    )
-    return merged_paras
 
 
 def merge_page_elements(
@@ -278,7 +226,7 @@ def merge_page_elements(
     page_num: int,
 ) -> list[PageElement]:
     """
-    Full three-pass merge: chars → words → lines → paragraphs.
+    Two-pass merge: chars → words → lines.
 
     This is the main entry point for Stage 2.
 
@@ -287,17 +235,16 @@ def merge_page_elements(
         page_num: Page number.
 
     Returns:
-        List of paragraph-level PageElements.
+        List of line-level PageElements.
     """
     words = merge_chars_to_words(chars, page_num)
     lines = merge_words_to_lines(words, page_num)
-    paragraphs = merge_lines_to_paragraphs(lines, page_num)
 
     logger.info(
-        "Page %d: merged %d chars → %d words → %d lines → %d paragraphs",
-        page_num, len(chars), len(words), len(lines), len(paragraphs),
+        "Page %d: merged %d chars → %d words → %d line fragments",
+        page_num, len(chars), len(words), len(lines),
     )
-    return paragraphs
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +278,7 @@ def _merge_elements_with_spaces(
             source=el.source,
             confidence=el.confidence,
             mcid=el.mcid,
-            merged_from=[el.element_id],
+            merged_from=list(el.merged_from) if el.merged_from else [el.element_id],
         )
 
     # Build text with spaces at word boundaries
@@ -406,7 +353,7 @@ def _merge_elements(
             source=el.source,
             confidence=el.confidence,
             mcid=el.mcid,
-            merged_from=[el.element_id],
+            merged_from=list(el.merged_from) if el.merged_from else [el.element_id],
         )
 
     # Concatenate text

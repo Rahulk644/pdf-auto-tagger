@@ -97,7 +97,10 @@ def tag_untagged_pdf(
 
     Creates /MarkInfo, /StructTreeRoot, Document element,
     StructElem for each tagged element, and /Tabs /S on pages.
+    Also injects BDC/EMC operators into the content streams.
     """
+    from tagger.stage10_writeback.content_stream_writer import inject_bdc_markers
+
     stats = {
         "total_elements_written": 0,
         "pages_modified": 0,
@@ -107,6 +110,14 @@ def tag_untagged_pdf(
     try:
         pdf = pikepdf.open(str(input_path))
         root = pdf.Root
+
+        # 0. Build single source of truth for MCIDs
+        element_mcid_map = {}
+        mcid_counter = 0
+        for el in tagged_elements:
+            if el.pdf_tag != PDFTag.ARTIFACT:
+                element_mcid_map[el.element_id] = mcid_counter
+                mcid_counter += 1
 
         # 1. Set MarkInfo
         root["/MarkInfo"] = pdf.make_indirect(
@@ -147,6 +158,9 @@ def tag_untagged_pdf(
             # Sort elements by reading order
             page_elements.sort(key=lambda e: (e.bbox[1], e.bbox[0]))
 
+            # 4.1 Inject BDC markers into the content stream
+            injected_mcids = inject_bdc_markers(pdf, page, page_num, page_elements, element_mcid_map)
+
             page_struct_parents = Array([])
 
             # Track consecutive LI elements for grouping into L
@@ -171,27 +185,35 @@ def tag_untagged_pdf(
                     # Create L (list) container
                     li_struct_elems = Array([])
                     for li_el in li_run:
+                        li_mcid = element_mcid_map.get(li_el.element_id)
+                        if li_mcid is None or li_mcid not in injected_mcids:
+                            continue
                         li_struct = _build_list_item_struct(
                             pdf, li_el, doc_elem, page.obj,
-                            mcid_counter,
+                            li_mcid,
                         )
                         li_struct_elems.append(li_struct)
                         page_struct_parents.append(li_struct)
-                        mcid_counter += 1
                         stats["total_elements_written"] += 1
 
-                    list_elem = pdf.make_indirect(Dictionary({
-                        "/Type": Name.StructElem,
-                        "/S": Name("/L"),
-                        "/P": doc_elem,
-                        "/K": li_struct_elems,
-                    }))
-                    doc_elem["/K"].append(list_elem)
+                    if li_struct_elems:
+                        list_elem = pdf.make_indirect(Dictionary({
+                            "/Type": Name.StructElem,
+                            "/S": Name("/L"),
+                            "/P": doc_elem,
+                            "/K": li_struct_elems,
+                        }))
+                        doc_elem["/K"].append(list_elem)
 
                     i = j
                     continue
 
                 # Regular element
+                mcid = element_mcid_map.get(el.element_id)
+                if mcid is None or mcid not in injected_mcids:
+                    i += 1
+                    continue
+
                 tag_name = el.pdf_tag.value
                 if tag_name not in WRITEBACK.tag_role_map:
                     tag_name = "P"
@@ -200,7 +222,7 @@ def tag_untagged_pdf(
                     "/Type": Name.StructElem,
                     "/S": Name(f"/{tag_name}"),
                     "/P": doc_elem,
-                    "/K": mcid_counter,
+                    "/K": mcid,
                     "/Pg": page.obj,
                 }
 
@@ -210,12 +232,16 @@ def tag_untagged_pdf(
                 if el.pdf_tag == PDFTag.FIGURE and el.alt_text:
                     struct_elem_dict["/Alt"] = String(el.alt_text)
 
+                # TODO: TABLE nested structure (TR/TH/TD with Scope attributes)
+                # specialist_data["html"] contains properly scoped TH/TD HTML from Stage 5.
+                # Implementing nested struct requires cell-level MCID assignment (currently
+                # one MCID per region). Wire up when BDC injection is upgraded to cell-level.
+
                 struct_elem = pdf.make_indirect(Dictionary(struct_elem_dict))
 
                 doc_elem["/K"].append(struct_elem)
                 page_struct_parents.append(struct_elem)
 
-                mcid_counter += 1
                 stats["total_elements_written"] += 1
                 i += 1
 
@@ -280,8 +306,8 @@ def _build_list_item_struct(
 
     PDF/UA structure: LI > [ Lbl, LBody ]
     """
-    label = el.specialist_data.get("list_label", "")
-    body = el.specialist_data.get("list_body", el.text)
+    label = el.specialist_data.get("list_label", "") if hasattr(el, "specialist_data") and el.specialist_data else ""
+    body = el.specialist_data.get("list_body", el.text) if hasattr(el, "specialist_data") and el.specialist_data else el.text
 
     children = Array([])
 

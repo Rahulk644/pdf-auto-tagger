@@ -82,10 +82,15 @@ class ValidationContext:
         formula_results: dict[str, FormulaResult] | None = None,
         figure_infos: dict[str, FigureInfo] | None = None,
     ):
+        from collections import defaultdict
         self.all_elements = all_elements
         self.table_structures = table_structures or {}
         self.formula_results = formula_results or {}
         self.figure_infos = figure_infos or {}
+        
+        self.elements_by_page = defaultdict(list)
+        for e in all_elements:
+            self.elements_by_page[e.page_num].append(e)
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +196,10 @@ class ZeroCharElementRule(ValidationRule):
         if not element.text or not element.text.strip():
             return ValidationResult(
                 rule_name=self.name,
-                action="flag",
-                reason="Element has no text content",
-                new_confidence=VALIDATOR.failed_confidence_cap,
+                action="reclassify",
+                reason="Element has no text content — suppressing as artifact",
+                new_tag=PDFTag.ARTIFACT,
+                new_confidence=0.0,
             )
         return None
 
@@ -236,20 +242,43 @@ class OverlappingRegionRule(ValidationRule):
     def check(self, element: TaggedElement, context: ValidationContext) -> ValidationResult | None:
         from tagger.stage1_extraction.coord_transformer import compute_iou
 
-        for other in context.all_elements:
-            if other.element_id == element.element_id:
-                continue
-            if other.page_num != element.page_num:
+        for other in context.elements_by_page[element.page_num]:
+            if other.element_id <= element.element_id:
                 continue
 
             iou = compute_iou(element.bbox, other.bbox)
             if iou >= VALIDATOR.overlap_iou_threshold:
+                if other.confidence < element.confidence:
+                    continue  # Let the lower-confidence element get flagged when it's evaluated
+                
                 return ValidationResult(
                     rule_name=self.name,
                     action="flag",
                     reason=f"Overlaps with {other.element_id} (IoU={iou:.2f})",
                     new_confidence=VALIDATOR.failed_confidence_cap,
                 )
+        return None
+
+
+class StandaloneCurrencyRule(ValidationRule):
+    """Standalone currency symbols (like '$') should be suppressed as Artifacts."""
+
+    @property
+    def name(self) -> str:
+        return "standalone_currency"
+
+    def check(self, element: TaggedElement, context: ValidationContext) -> ValidationResult | None:
+        if element.pdf_tag in (PDFTag.FIGURE, PDFTag.ARTIFACT, PDFTag.TABLE):
+            return None
+
+        if element.text and element.text.strip() == "$":
+            return ValidationResult(
+                rule_name=self.name,
+                action="reclassify",
+                reason="Standalone currency symbol — suppressing as artifact",
+                new_tag=PDFTag.ARTIFACT,
+                new_confidence=0.8,
+            )
         return None
 
 
@@ -263,6 +292,7 @@ DEFAULT_RULES: list[ValidationRule] = [
     EmptyTableRule(),
     InvalidLatexRule(),
     ZeroCharElementRule(),
+    StandaloneCurrencyRule(),
     TinyFigureRule(),
     OverlappingRegionRule(),
 ]

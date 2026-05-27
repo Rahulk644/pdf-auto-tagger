@@ -195,7 +195,7 @@ def _extract_color(color_val) -> str | None:
     try:
         if isinstance(color_val, (int, float)):
             # Grayscale: 0 = black, 1 = white
-            gray = int(max(0, min(255, (1.0 - float(color_val)) * 255)))
+            gray = int(max(0, min(255, float(color_val) * 255)))
             return f"#{gray:02x}{gray:02x}{gray:02x}"
 
         if isinstance(color_val, (tuple, list)):
@@ -216,7 +216,7 @@ def _extract_color(color_val) -> str | None:
 
             if len(color_val) == 1:
                 # Single-element tuple (grayscale)
-                gray = int(max(0, min(255, (1.0 - float(color_val[0])) * 255)))
+                gray = int(max(0, min(255, float(color_val[0]) * 255)))
                 return f"#{gray:02x}{gray:02x}{gray:02x}"
 
     except (ValueError, TypeError, IndexError):

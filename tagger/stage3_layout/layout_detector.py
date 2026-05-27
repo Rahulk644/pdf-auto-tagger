@@ -48,6 +48,7 @@ _CATEGORY_MAP: dict[str, LayoutCategory] = {
     "figure": LayoutCategory.PICTURE,
     "image": LayoutCategory.PICTURE,
     "caption": LayoutCategory.CAPTION,
+    "table_caption": LayoutCategory.CAPTION,
     "footnote": LayoutCategory.FOOTNOTE,
     "page-header": LayoutCategory.PAGE_HEADER,
     "page_header": LayoutCategory.PAGE_HEADER,
@@ -387,13 +388,22 @@ class MinerULayoutDetector(LayoutModelAdapter):
             
             x0, y0, x1, y1 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
             
-            # MinerU / Qwen-VL outputs coordinates normalized to 1000
-            # If coordinates are in [0, 1000] space, scale them back to the image DPI
-            if max(x0, x1, y0, y1) <= 1000.0:
+            max_val = max(x0, x1, y0, y1)
+
+            if max_val <= 1.5:
+                # Already in 0-1 normalized space (in-process MinerU / Qwen-VL)
+                # Scale directly to image pixel dimensions
+                x0 = x0 * img_width
+                x1 = x1 * img_width
+                y0 = y0 * img_height
+                y1 = y1 * img_height
+            elif max_val <= 1000.0:
+                # 0-1000 space (subprocess path)
                 x0 = (x0 / 1000.0) * img_width
                 x1 = (x1 / 1000.0) * img_width
                 y0 = (y0 / 1000.0) * img_height
                 y1 = (y1 / 1000.0) * img_height
+            # else: already in pixel coords, use as-is
 
             bbox_tuple = (x0, y0, x1, y1)
 

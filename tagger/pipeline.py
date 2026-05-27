@@ -15,22 +15,19 @@ import gc
 import json
 import logging
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import fitz  # PyMuPDF
 from PIL import Image
 
-from tagger.config import PIPELINE, STANDARD_DPI
+from tagger.config import STANDARD_DPI
 from tagger.models.confidence import ConfidenceTracker
 from tagger.models.data_types import (
     DocumentData,
     LayoutCategory,
     PageData,
     PageElement,
-    PageType,
-    PDFTag,
     TaggedElement,
 )
 
@@ -103,7 +100,7 @@ class AutoTaggerPipeline:
         # ------------------------------------------------------------------
         # Stage 2: Merge text fragments
         # ------------------------------------------------------------------
-        merged = self._timed("stage2", self._stage2_merge, doc_data)
+        self._timed("stage2", self._stage2_merge, doc_data)
 
         # ------------------------------------------------------------------
         # Stage 3: Layout detection (loads MinerU, unloads after)
@@ -325,69 +322,45 @@ class AutoTaggerPipeline:
         """Stage 4+5: Route regions and create initial tagged elements."""
         logger.info("[Stage 4+5] Routing and initial tagging...")
 
-        category_to_tag: dict[LayoutCategory, PDFTag] = {
-            LayoutCategory.TITLE:          PDFTag.H1,
-            LayoutCategory.SECTION_HEADER: PDFTag.H2,
-            LayoutCategory.TEXT:           PDFTag.P,
-            LayoutCategory.LIST_ITEM:      PDFTag.LI,
-            LayoutCategory.TABLE:          PDFTag.TABLE,
-            LayoutCategory.FORMULA:        PDFTag.FORMULA,
-            LayoutCategory.PICTURE:        PDFTag.FIGURE,
-            LayoutCategory.CAPTION:        PDFTag.P,
-            LayoutCategory.FOOTNOTE:       PDFTag.NOTE,
-            LayoutCategory.PAGE_HEADER:    PDFTag.ARTIFACT,
-            LayoutCategory.PAGE_FOOTER:    PDFTag.ARTIFACT,
-        }
+        from tagger.stage4_router.content_router import route_page, diagnose_page
+        from tagger.stage5_specialists.table_extractor import extract_table_native
+        from tagger.models.data_types import LayoutCategory
 
         total_tagged = 0
         for page_num, page_data in doc_data.pages.items():
-            tagged: list[TaggedElement] = []
-            
-            el_to_cat = {}
-            if page_data.layout_regions and not page_data.layout_regions[0].matched_elements:
-                for el in page_data.elements:
-                    ex0, ey0, ex1, ey1 = el.bbox
-                    ecx, ecy = (ex0 + ex1)/2, (ey0 + ey1)/2
-                    
-                    best_region = None
-                    best_dist = float('inf')
-                    for region in page_data.layout_regions:
-                        rx0, ry0, rx1, ry1 = region.bbox
-                        rcx, rcy = (rx0 + rx1)/2, (ry0 + ry1)/2
-                        dist = (ecx - rcx)**2 + (ecy - rcy)**2
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_region = region
-                            
-                    if best_region:
-                        el_to_cat[el.element_id] = (best_region.category, best_region.confidence)
-            else:
-                for region in page_data.layout_regions:
-                    for eid in (region.matched_elements or []):
-                        el_to_cat[eid] = (region.category, region.confidence)
+            tagged = route_page(
+                page_num=page_num,
+                mineru_regions=page_data.layout_regions,
+                page_elements=page_data.elements,
+                containment_threshold=0.5,
+            )
+            logger.info("Page %d Diagnostics: %s", page_num, diagnose_page(tagged))
 
-            for el in page_data.elements:
-                cat, conf = el_to_cat.get(el.element_id, (LayoutCategory.TEXT, 1.0))
-                pdf_tag = category_to_tag.get(cat, PDFTag.P)
-                tagged_el = TaggedElement(
-                    element_id=el.element_id,
-                    page_num=page_num,
-                    pdf_tag=pdf_tag,
-                    text=el.text,
-                    bbox=el.bbox,
-                    confidence=conf,
-                    original_mcid=el.mcid,
-                    font_name=el.font_name,
-                    font_size=el.font_size,
-                    font_weight=el.font_weight,
-                    layout_category=cat.value if isinstance(cat, LayoutCategory) else str(cat),
-                )
-                tagged.append(tagged_el)
-                total_tagged += 1
+            # Stage 5: run table specialist on TABLE regions
+            table_regions = [
+                r for r in page_data.layout_regions
+                if r.category == LayoutCategory.TABLE
+            ]
+            if table_regions and page_data.classification:
+                for region in table_regions:
+                    table_struct = extract_table_native(
+                        doc_data.input_path, page_num, region, page_data.classification
+                    )
+                    if table_struct:
+                        for el in tagged:
+                            if el.element_id == region.region_id:
+                                el.specialist_data = {
+                                    "html": table_struct.html,
+                                    "num_rows": table_struct.num_rows,
+                                    "num_cols": table_struct.num_cols,
+                                    "has_header": table_struct.has_header,
+                                }
+                                break
 
             page_data.tagged_elements = tagged
+            total_tagged += len(tagged)
 
-        logger.debug(f"Created {total_tagged} initially tagged elements.")
+        logger.debug("Created %d initially tagged elements.", total_tagged)
 
     def _stage6_validate(self, doc_data: DocumentData):
         """Stage 6: Consistency validation."""
@@ -444,7 +417,7 @@ class AutoTaggerPipeline:
         detect_toc_entries(all_tagged, doc_data.num_pages)
 
         # 8c: Artifact detection (running headers/footers)
-        detect_artifacts(all_tagged)
+        detect_artifacts(all_tagged, doc_data.num_pages)
 
         # 8d: Caption detection
         detect_captions(all_tagged)
@@ -477,8 +450,10 @@ class AutoTaggerPipeline:
         for page_data in doc_data.pages.values():
             all_tagged.extend(page_data.tagged_elements)
 
-        # Check if PDF is already tagged (any element has an MCID)
-        has_existing_tags = any(el.original_mcid is not None for el in all_tagged)
+        # Check if PDF has an existing struct tree (V1) vs needs one built (V2).
+        # We check the actual PDF structure, not element MCIDs — a stripped PDF
+        # still has BDC markers in content streams that produce non-None MCIDs.
+        has_existing_tags = self._pdf_has_struct_tree(input_pdf)
 
         if has_existing_tags:
             logger.info("[Stage 10] Re-tagging existing tagged PDF...")
@@ -561,8 +536,18 @@ class AutoTaggerPipeline:
         return report
 
     # ------------------------------------------------------------------
-    # Timing helper
+    # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pdf_has_struct_tree(pdf_path: str) -> bool:
+        """Return True if the PDF has an existing StructTreeRoot (V1 path)."""
+        try:
+            import pikepdf
+            with pikepdf.open(pdf_path) as pdf:
+                return "/StructTreeRoot" in pdf.Root
+        except Exception:
+            return False
 
     def _timed(self, stage_name: str, func, *args, **kwargs):
         """Run a function and record its execution time."""

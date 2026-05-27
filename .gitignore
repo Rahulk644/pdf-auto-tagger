@@ -9,3 +9,8 @@ dist/
 build/
 .eggs/
 
+*.pdf
+*.json
+*.zip
+output_modal/
+output_batch/
