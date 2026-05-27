@@ -600,8 +600,16 @@ class AutoTaggerPipeline:
         # 8d: Caption detection
         detect_captions(all_tagged)
 
-        # 8e: List structure
-        build_list_structure(all_tagged)
+        # 8e: List structure — may add/remove elements (P→LI promotion merges
+        # separated marker+body), so redistribute the result back into each
+        # page's tagged_elements (Stage 10 re-collects from page_data).
+        all_tagged = build_list_structure(all_tagged)
+        from collections import defaultdict
+        by_page: dict[int, list[TaggedElement]] = defaultdict(list)
+        for el in all_tagged:
+            by_page[el.page_num].append(el)
+        for page_num, page_data in doc_data.pages.items():
+            page_data.tagged_elements = by_page.get(page_num, [])
 
     def _stage9_alttext(self, input_pdf: str, doc_data: DocumentData):
         """Stage 9: Alt text for figure elements."""
