@@ -26,7 +26,15 @@ _TOC_PATTERNS = [
     re.compile(r"^.+?\s{3,}\d+\s*$"),                  # space leaders + page num
     re.compile(r"^\d+(\.\d+)*\s+.+?\s+\d+\s*$"),       # "1.2.3 Title 42"
     re.compile(r"^(Chapter|Section|Part)\s+\d+.*\d+$", re.IGNORECASE),
+    re.compile(r"^\d{1,3}\s*[A-Za-z].*\.{3,}"),        # page-num prefix + title + dot leaders
 ]
+
+# TOC entries are often mis-tagged as headings upstream (MinerU classifies
+# dot-leader lines as Title/Section-header); the dot-leader pattern is the
+# structural signal, so consider headings as candidates too.
+_TOC_CANDIDATE_TAGS = {
+    PDFTag.P, PDFTag.H1, PDFTag.H2, PDFTag.H3, PDFTag.H4, PDFTag.H5, PDFTag.H6,
+}
 
 
 def detect_toc_entries(
@@ -45,14 +53,15 @@ def detect_toc_entries(
     if total_pages == 0:
         return elements
 
-    # Only look in the first N% of pages
-    max_toc_page = max(1, int(total_pages * SEMANTIC.toc_page_fraction))
+    # Only look in the first N% of pages, but always at least the first 3 —
+    # the fraction alone misses TOCs on short docs (e.g. page 2 of a 15-page doc).
+    max_toc_page = max(int(total_pages * SEMANTIC.toc_page_fraction), 3)
 
-    # Collect candidate elements
+    # Collect candidate elements (P or heading-tagged — see _TOC_CANDIDATE_TAGS)
     candidates = [
         el for el in elements
         if el.page_num <= max_toc_page
-        and el.pdf_tag == PDFTag.P  # TOC entries are usually tagged as paragraphs
+        and el.pdf_tag in _TOC_CANDIDATE_TAGS
         and el.text
     ]
 
