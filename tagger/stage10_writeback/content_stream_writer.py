@@ -23,20 +23,41 @@ def inject_bdc_markers(
     for el in tagged_elements:
         if el.page_num != page_num:
             continue
-        if el.element_id not in element_mcid_map:
-            continue
             
-        mcid = element_mcid_map[el.element_id]
-        mcid_to_tag[mcid] = el.pdf_tag.value
-        
-        for source_id in el.merged_from:
-            # Source IDs are like "p1_c5"
-            if source_id.startswith(f"p{page_num}_c"):
-                try:
-                    char_idx = int(source_id.split("_c")[1])
-                    char_to_mcid[char_idx] = mcid
-                except ValueError:
-                    pass
+        if el.pdf_tag.value == "Table" and el.specialist_data.get("cells"):
+            for cell in el.specialist_data["cells"]:
+                if not cell.get("merged_from"):
+                    continue
+                cell_id = f"{el.element_id}_cell_{cell['row_idx']}_{cell['col_idx']}"
+                if cell_id not in element_mcid_map:
+                    continue
+                
+                mcid = element_mcid_map[cell_id]
+                td_tag = "TH" if cell.get("is_header") or cell.get("is_row_header") else "TD"
+                mcid_to_tag[mcid] = td_tag
+                
+                for source_id in cell["merged_from"]:
+                    if source_id.startswith(f"p{page_num}_c"):
+                        try:
+                            char_idx = int(source_id.split("_c")[1])
+                            char_to_mcid[char_idx] = mcid
+                        except ValueError:
+                            pass
+        else:
+            if el.element_id not in element_mcid_map:
+                continue
+                
+            mcid = element_mcid_map[el.element_id]
+            mcid_to_tag[mcid] = el.pdf_tag.value
+            
+            for source_id in el.merged_from:
+                # Source IDs are like "p1_c5"
+                if source_id.startswith(f"p{page_num}_c"):
+                    try:
+                        char_idx = int(source_id.split("_c")[1])
+                        char_to_mcid[char_idx] = mcid
+                    except ValueError:
+                        pass
 
     if not char_to_mcid:
         logger.debug(f"Page {page_num}: No characters mapped to MCIDs. Skipping BDC injection.")

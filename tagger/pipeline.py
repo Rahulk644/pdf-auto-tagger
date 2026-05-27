@@ -344,7 +344,8 @@ class AutoTaggerPipeline:
             if table_regions and page_data.classification:
                 for region in table_regions:
                     table_struct = extract_table_native(
-                        doc_data.input_path, page_num, region, page_data.classification
+                        doc_data.input_path, page_num, region, page_data.classification,
+                        page_data.elements
                     )
                     if table_struct:
                         for el in tagged:
@@ -354,6 +355,7 @@ class AutoTaggerPipeline:
                                     "num_rows": table_struct.num_rows,
                                     "num_cols": table_struct.num_cols,
                                     "has_header": table_struct.has_header,
+                                    "cells": getattr(table_struct, "cells", [])
                                 }
                                 break
 

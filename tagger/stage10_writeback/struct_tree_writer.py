@@ -116,8 +116,16 @@ def tag_untagged_pdf(
         mcid_counter = 0
         for el in tagged_elements:
             if el.pdf_tag != PDFTag.ARTIFACT:
-                element_mcid_map[el.element_id] = mcid_counter
-                mcid_counter += 1
+                if el.pdf_tag == PDFTag.TABLE and el.specialist_data.get("cells"):
+                    # Give each non-empty cell an MCID
+                    for cell in el.specialist_data["cells"]:
+                        if cell.get("merged_from"):
+                            cell_id = f"{el.element_id}_cell_{cell['row_idx']}_{cell['col_idx']}"
+                            element_mcid_map[cell_id] = mcid_counter
+                            mcid_counter += 1
+                else:
+                    element_mcid_map[el.element_id] = mcid_counter
+                    mcid_counter += 1
 
         # 1. Set MarkInfo
         root["/MarkInfo"] = pdf.make_indirect(
@@ -208,6 +216,71 @@ def tag_untagged_pdf(
                     i = j
                     continue
 
+                # TABLE nested structure
+                if el.pdf_tag == PDFTag.TABLE and el.specialist_data.get("cells"):
+                    # Construct nested TR/TH/TD
+                    table_struct_elem = pdf.make_indirect(Dictionary({
+                        "/Type": Name.StructElem,
+                        "/S": Name("/Table"),
+                        "/P": doc_elem,
+                        "/K": Array([]),
+                    }))
+                    doc_elem["/K"].append(table_struct_elem)
+                    page_struct_parents.append(table_struct_elem)
+
+                    # Group cells by row
+                    rows = {}
+                    for cell in el.specialist_data["cells"]:
+                        rows.setdefault(cell["row_idx"], []).append(cell)
+
+                    for row_idx in sorted(rows.keys()):
+                        tr_elem = pdf.make_indirect(Dictionary({
+                            "/Type": Name.StructElem,
+                            "/S": Name("/TR"),
+                            "/P": table_struct_elem,
+                            "/K": Array([]),
+                        }))
+                        table_struct_elem["/K"].append(tr_elem)
+                        page_struct_parents.append(tr_elem)
+
+                        for cell in sorted(rows[row_idx], key=lambda c: c["col_idx"]):
+                            cell_id = f"{el.element_id}_cell_{cell['row_idx']}_{cell['col_idx']}"
+                            cell_mcid = element_mcid_map.get(cell_id)
+                            
+                            is_empty = not cell.get("merged_from")
+                            if not is_empty and (cell_mcid is None or cell_mcid not in injected_mcids):
+                                continue # Skip mapping non-empty cells that failed BDC injection
+
+                            td_tag = "TH" if cell.get("is_header") or cell.get("is_row_header") else "TD"
+
+                            td_elem_dict = {
+                                "/Type": Name.StructElem,
+                                "/S": Name(f"/{td_tag}"),
+                                "/P": tr_elem,
+                            }
+                            
+                            if not is_empty:
+                                td_elem_dict["/K"] = cell_mcid
+                                td_elem_dict["/Pg"] = page.obj
+
+                            if td_tag == "TH":
+                                if cell.get("is_header"):
+                                    td_elem_dict["/A"] = Dictionary({"/O": Name("/Table"), "/Scope": Name("/Column")})
+                                elif cell.get("is_row_header"):
+                                    td_elem_dict["/A"] = Dictionary({"/O": Name("/Table"), "/Scope": Name("/Row")})
+
+                            if cell.get("text"):
+                                td_elem_dict["/ActualText"] = String(cell["text"])
+
+                            td_elem = pdf.make_indirect(Dictionary(td_elem_dict))
+                            tr_elem["/K"].append(td_elem)
+                            page_struct_parents.append(td_elem)
+                            stats["total_elements_written"] += 1
+
+                    stats["total_elements_written"] += 1
+                    i += 1
+                    continue
+
                 # Regular element
                 mcid = element_mcid_map.get(el.element_id)
                 if mcid is None or mcid not in injected_mcids:
@@ -231,11 +304,6 @@ def tag_untagged_pdf(
 
                 if el.pdf_tag == PDFTag.FIGURE and el.alt_text:
                     struct_elem_dict["/Alt"] = String(el.alt_text)
-
-                # TODO: TABLE nested structure (TR/TH/TD with Scope attributes)
-                # specialist_data["html"] contains properly scoped TH/TD HTML from Stage 5.
-                # Implementing nested struct requires cell-level MCID assignment (currently
-                # one MCID per region). Wire up when BDC injection is upgraded to cell-level.
 
                 struct_elem = pdf.make_indirect(Dictionary(struct_elem_dict))
 
