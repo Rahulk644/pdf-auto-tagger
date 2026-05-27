@@ -20,21 +20,24 @@ python -m tagger.cli serve
 # Run on Modal GPU (A10G) — processes all 5 corpus PDFs
 /Users/rahulkhatri/Library/Python/3.9/bin/modal run run_modal.py
 
+# Run on Modal GPU — Miramar + Summary of Revenues only
+/Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_modal_targeted.py
+
+# Run QA evaluation (extraction local, Gemma inference on Modal H100)
+/Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_qa_modal.py
+
+# Analyze QA results across documents
+python analyze_qa_report.py
+
 # Run tests
 pytest
 pytest tests/test_stage6.py           # single file
 pytest tests/test_stage5.py -v        # verbose
-
-# Run QA evaluation against the PREP QA Tool
-cd "/Users/rahulkhatri/PREP QA Tool" && python run_modal_qa_eval.py
-# Analyze QA results across all five documents
-cd "/Users/rahulkhatri/PREP QA Tool" && python analyze_qa_report.py
 ```
 
 **Python environments:**
-- `.venv3/` — has `pikepdf`, `pdfplumber`, `pillow` (use for local pipeline work)
+- `.venv3/` — has `pikepdf`, `pdfplumber`, `pillow`, `modal` (use for local pipeline work)
 - `/Users/rahulkhatri/Library/Python/3.9/bin/` — has `modal` CLI
-- PREP QA Tool uses its own `venv/` at `/Users/rahulkhatri/PREP QA Tool/venv/`
 - Modal remote runs Python 3.11 with the `tagger/` directory synced as `/root/tagger`
 
 ## Architecture
@@ -48,6 +51,7 @@ Stage 0  page_classifier     — Native vs scanned detection (pdfplumber heurist
 Stage 1  native_extractor    — Character-level extraction; assigns p{N}_c{idx} IDs
 Stage 2  text_merger         — Merges chars → words → line elements (PageElement)
 Stage 3  layout_detector     — MinerU detects layout regions (Title, Table, Figure…)
+                               + pdfplumber table fallback for tables MinerU misses
 Stage 4+5 content_router     — Maps Stage 2 PageElements into Stage 3 regions;
            specialists        — Table/figure/formula specialists produce TaggedElements
 Stage 6  consistency_validator — Rule engine; converts bad elements to Artifact
@@ -73,11 +77,20 @@ Stage 10 struct_tree_writer  — Builds PDF struct tree + injects BDC/EMC marker
 
 `inject_bdc_markers` rewrites the page content stream entirely. It strips all existing `BDC`/`BMC`/`EMC` operators from the original stream (to prevent phantom MCID conflicts) then injects new `BDC`/`EMC` around text operators using `char_to_mcid` — a map from Stage-1 char index → MCID built from `merged_from` lists. Characters not in `char_to_mcid` (whitespace skipped by Stage 1) fall outside any BDC block.
 
-### QA evaluation (`/Users/rahulkhatri/PREP QA Tool/`)
+### QA evaluation (`tagger/qa/` + `scratch/run_qa_modal.py`)
 
-Separate Flask server (`app_auditor.py`, port 5001) that reads a tagged PDF with pdfplumber, extracts elements by MCID, overlays struct-tree tags from the struct tree, then sends elements to Gemma-4 for accessibility review. Results saved to `scratch/qa_results_modal/`. The `analyze_qa_report.py` script in the Tagger root prints per-document breakdowns (errors by tag, errors by page, corrective reasoning).
+`scratch/run_qa_modal.py` is the QA runner. It runs locally via `modal run` (so the Modal gRPC client stays alive), does all PDF extraction and rendering locally, and calls `GemmaInference.generate.remote()` on Modal for each chunk:
 
-**Corpus:** Five test PDFs. Tagged outputs land in `output_modal/`. QA reports in `/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal/`.
+- **Local:** pdfplumber MCID extraction, pdfminer struct-tree parsing, fitz page rendering
+- **Remote:** Gemma 4 31B on H100 (`qa-gemma4-inference` app, up to 9 containers)
+- **Chunking:** 60 elements/chunk, sequential within a page, pages processed sequentially
+- **Rules:** `tagger/qa/rules_db.py` injects PDF/UA + WCAG 2.2 rules into prompts based on tags present
+
+Results saved to `/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal/` as `qa_<stem>.json`. `analyze_qa_report.py` in the Tagger root prints per-document breakdowns.
+
+**Deploying inference changes:** `modal deploy tagger/qa/modal_inference.py`
+
+**Corpus:** Five test PDFs. Tagged outputs land in `output_modal/`.
 
 ### Configuration (`tagger/config.py`)
 
@@ -89,7 +102,8 @@ All magic numbers are in frozen dataclasses exported as singletons (`PAGE_CLASSI
 
 ## Known architectural constraints
 
+- **MinerU always on Modal** — Never run MinerU (Stage 3) locally; it pegs CPU on M1 8GB. Always use `modal run`.
 - **One ML model at a time** — Pipeline is designed for M1 8GB. MinerU (Stage 3) loads, runs, and is GC'd before Stage 9's Qwen VL loads. Don't hold model references across stages.
 - **Stage 6 runs before Stage 8** — Any element created or reclassified by Stage 8 (heading ranker, list builder, etc.) bypasses Stage 6 validation.
 - **pdfplumber `page.chars` skips** — Stage 1 skips chars where `text.isspace()` or bbox width/height < 0.1. These chars have no `p{N}_c{idx}` ID and are invisible to Stage 10's BDC injection.
-- **Flask QA server is single-threaded per request** — `audit_page_batch` blocks until all element-level chunks (60 elements per chunk, concurrent via ThreadPoolExecutor) complete. Send all pages in one POST; the server handles RPM rate limiting (30 pages/batch with 60s pause between batches) internally.
+- **QA runner needs `modal run`** — `scratch/run_qa_modal.py` must be invoked via `modal run`, not plain `python`. Running it directly causes `ClientClosed` errors when `.generate.remote()` tries to hold a connection without a Modal app context.

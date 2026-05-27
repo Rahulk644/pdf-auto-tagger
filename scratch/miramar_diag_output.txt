@@ -1,0 +1,21 @@
+Running pipeline on miramar_untagged.pdf...
+
+=== STAGE 3: MinerU Layout Regions ===
+  Page 1: 13 regions  {'Title': 5, 'Text': 5, 'Caption': 2, 'Table': 1}
+  Page 2: 22 regions  {'Title': 7, 'Text': 14, 'Table': 1}
+  Page 3: 12 regions  {'Title': 4, 'Text': 7, 'Table': 1}
+
+=== STAGE 4/5: Tagged Elements (after route + table specialist) ===
+  Page 1: 13 elements  tags={'H1': 5, 'P': 5, 'Caption': 2, 'Table': 1}  empty_merged_from=0
+  Page 2: 22 elements  tags={'H1': 7, 'P': 14, 'Table': 1}  empty_merged_from=20
+  Page 3: 12 elements  tags={'H1': 4, 'P': 7, 'Table': 1}  empty_merged_from=0
+
+=== STAGE 10 INPUT: Surviving elements per page ===
+  Page 1: 13 elements  tags={'Artifact': 2, 'H1': 1, 'H2': 2, 'P': 5, 'Caption': 2, 'Table': 1}  empty_merged_from=0
+  Page 2: 22 elements  tags={'Artifact': 21, 'Table': 1}  empty_merged_from=20
+  Page 3: 12 elements  tags={'Artifact': 3, 'H1': 2, 'P': 6, 'Table': 1}  empty_merged_from=0
+
+=== STAGE 10 OUTPUT: BDC/EMC per page ===
+  Page 1: BDC=21 EMC=21 balanced=True
+  Page 2: BDC=67 EMC=67 balanced=True
+  Page 3: BDC=16 EMC=16 balanced=True

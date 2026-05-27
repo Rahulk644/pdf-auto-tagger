@@ -1,0 +1,189 @@
+Tree structure:
+- /Document
+  - /H2
+    - MCID 0
+  - /P
+    - MCID 1
+  - /H2
+    - MCID 3
+  - /P
+    - MCID 4
+  - /Caption
+    - MCID 6
+  - /Table
+    - /TR
+      - /TH [Scope=/Column]
+        - MCID 7
+    - /TR
+      - /TD
+        - MCID 18
+    - /TR
+    - /TR
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+    - /TR
+    - /TR
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+    - /TR
+      - /TH [Scope=/Row]
+        - MCID 35
+      - /TD
+        - MCID 38
+    - /TR
+    - /TR
+    - /TR
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+    - /TR
+      - /TD
+        - MCID 58
+    - /TR
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+    - /TR
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+    - /TR
+    - /TR
+    - /TR
+      - /TD
+        - MCID 84
+    - /TR
+  - /P
+    - MCID 92
+  - /H2
+    - MCID 94
+  - /H2
+    - MCID 95
+  - /H2
+    - MCID 96
+  - /P
+    - MCID 97
+  - /P
+    - MCID 98
+  - /P
+    - MCID 99
+  - /P
+    - MCID 100
+  - /P
+    - MCID 101
+  - /H2
+    - MCID 102
+  - /P
+    - MCID 105
+  - /P
+    - MCID 106
+  - /P
+    - MCID 108
+  - /P
+    - MCID 109
+  - /P
+    - MCID 110
+  - /H1
+    - MCID 111
+  - /H1
+    - MCID 112
+  - /P
+    - MCID 113
+  - /Table
+    - /TR
+      - /TH [Scope=/Column]
+        - MCID 115
+    - /TR
+      - /TH [Scope=/Row]
+        - MCID 116
+    - /TR
+      - /TD
+        - MCID 119
+    - /TR
+    - /TR
+    - /TR
+      - /TD
+        - MCID 124
+    - /TR
+    - /TR
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+    - /TR
+      - /TH [Scope=/Row]
+        - MCID None
+    - /TR
+      - /TH [Scope=/Row]
+        - MCID None
+    - /TR
+      - /TD
+        - MCID None
+      - /TD
+        - MCID None
+    - /TR
+      - /TD
+        - MCID None
+  - /P
+    - MCID 131
+  - /P
+    - MCID 133
+  - /P
+    - MCID 134
+  - /P
+    - MCID 135

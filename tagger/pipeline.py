@@ -254,6 +254,9 @@ class AutoTaggerPipeline:
                 detector.unload()
                 gc.collect()
 
+            # pdfplumber fallback: inject TABLE regions MinerU missed
+            self._pdfplumber_table_fallback(input_pdf, doc_data)
+
         except (ImportError, RuntimeError) as e:
             logger.warning(
                 "  Layout detection unavailable (%s). "
@@ -317,6 +320,90 @@ class AutoTaggerPipeline:
                 ))
 
             page_data.layout_regions = regions
+
+    def _pdfplumber_table_fallback(self, input_pdf: str, doc_data: DocumentData) -> None:
+        """
+        Stage 3 post-processing: inject TABLE LayoutRegions for tables that
+        pdfplumber detects but MinerU missed.
+
+        Uses text-column alignment strategy — correct for financial documents
+        with no explicit ruling lines (e.g. Miramar CAFR).
+
+        Skip injection if an existing MinerU TABLE region is already
+        substantially contained within the pdfplumber bbox:
+          intersection / MinerU_table_area > CONTAINMENT_THRESHOLD
+        This avoids duplicate TABLE regions when MinerU found a tighter bbox
+        for the same table (IoU alone under-counts because pdfplumber's text
+        strategy returns oversized bboxes).
+        """
+        import pdfplumber
+        from tagger.models.data_types import LayoutCategory, LayoutRegion
+
+        SCALE = STANDARD_DPI / 72.0  # pdfplumber 72 DPI → standard 150 DPI
+        CONTAINMENT_THRESHOLD = 0.7
+        MIN_ROWS = 3
+        TABLE_SETTINGS = {
+            "vertical_strategy": "text",
+            "horizontal_strategy": "text",
+        }
+
+        try:
+            with pdfplumber.open(input_pdf) as pdf:
+                for page_num, page_data in doc_data.pages.items():
+                    page_idx = page_num - 1
+                    if page_idx >= len(pdf.pages):
+                        continue
+
+                    found = pdf.pages[page_idx].find_tables(TABLE_SETTINGS)
+                    if not found:
+                        continue
+
+                    existing_tables = [
+                        r for r in page_data.layout_regions
+                        if r.category == LayoutCategory.TABLE
+                    ]
+
+                    injected = 0
+                    for table in found:
+                        if len(table.rows) < MIN_ROWS:
+                            continue
+
+                        # Convert bbox to 150 DPI standard coords
+                        x0, y0, x1, y1 = (v * SCALE for v in table.bbox)
+
+                        # Skip if any MinerU TABLE is already substantially
+                        # contained within this pdfplumber bbox
+                        skip = False
+                        for er in existing_tables:
+                            mb = er.bbox
+                            ix0 = max(x0, mb[0]); iy0 = max(y0, mb[1])
+                            ix1 = min(x1, mb[2]); iy1 = min(y1, mb[3])
+                            if ix1 > ix0 and iy1 > iy0:
+                                inter = (ix1 - ix0) * (iy1 - iy0)
+                                mb_area = (mb[2] - mb[0]) * (mb[3] - mb[1])
+                                if mb_area > 0 and (inter / mb_area) > CONTAINMENT_THRESHOLD:
+                                    skip = True
+                                    break
+                        if skip:
+                            continue
+
+                        synthetic = LayoutRegion(
+                            region_id=f"r{page_num}_pb_{injected}",
+                            page_num=page_num,
+                            bbox=(x0, y0, x1, y1),
+                            category=LayoutCategory.TABLE,
+                            reading_order=len(page_data.layout_regions) + injected,
+                            confidence=0.7,
+                        )
+                        page_data.layout_regions.append(synthetic)
+                        injected += 1
+                        logger.info(
+                            "  Page %d: pdfplumber fallback injected TABLE "
+                            "(rows=%d bbox=%.0f,%.0f,%.0f,%.0f)",
+                            page_num, len(table.rows), x0, y0, x1, y1,
+                        )
+        except Exception as e:
+            logger.warning("pdfplumber table fallback failed: %s", e)
 
     def _stage4_5_route_extract(self, doc_data: DocumentData):
         """Stage 4+5: Route regions and create initial tagged elements."""
