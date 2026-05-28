@@ -350,3 +350,86 @@ def sanitize_cid_fonts(pdf: pikepdf.Pdf) -> int:
     if removed:
         logger.debug("Removed %d broken CIDSet stream(s).", removed)
     return removed
+
+
+def _strip_notdef_bytes(b: bytes) -> bytes:
+    """Drop every 2-byte 0x0000 (CID 0 = .notdef) pair from an Identity-H string."""
+    out = bytearray()
+    for i in range(0, len(b) - 1, 2):
+        if b[i] == 0 and b[i + 1] == 0:
+            continue
+        out += b[i:i + 2]
+    if len(b) % 2:
+        out += b[-1:]
+    return bytes(out)
+
+
+def _identity_type0_names(page) -> set:
+    """Resource names of Type0 fonts using a 2-byte Identity CMap on this page."""
+    res = page.obj.get("/Resources")
+    fonts = res.get("/Font") if res is not None else None
+    names = set()
+    if fonts is None:
+        return names
+    for n, f in fonts.items():
+        if str(f.get("/Subtype")) != "/Type0":
+            continue
+        if str(f.get("/Encoding")) in ("/Identity-H", "/Identity-V"):
+            names.add(str(n))
+    return names
+
+
+def strip_notdef_refs(pdf: pikepdf.Pdf) -> int:
+    """Remove .notdef (CID 0) references from Type0/Identity show operators (clause 7.21.8-1).
+
+    Source documents show subset Type0 fonts where a real glyph is padded with a
+    trailing CID 0 (always .notdef in CFF). UA-1 7.21.8 forbids any .notdef
+    reference in a text-showing operator. CID 0 cannot be made non-.notdef, so the
+    fix is to delete those codes from the show strings. The padding glyphs sit at
+    the end of independently positioned runs, so removal is rendering-neutral
+    (verified pixel-identical). Returns the number of .notdef codes removed.
+    """
+    removed = 0
+    for page in pdf.pages:
+        idnames = _identity_type0_names(page)
+        if not idnames:
+            continue
+        cur = None
+        changed = False
+        new_cs = []
+        for ins in pikepdf.parse_content_stream(page):
+            op = str(ins.operator)
+            if op == "Tf":
+                cur = str(ins.operands[0])
+            elif cur in idnames and op in ("Tj", "'", '"'):
+                s = bytes(ins.operands[-1])
+                ns = _strip_notdef_bytes(s)
+                if ns != s:
+                    removed += (len(s) - len(ns)) // 2
+                    ops = list(ins.operands)
+                    ops[-1] = pikepdf.String(ns)
+                    ins = pikepdf.ContentStreamInstruction(ops, ins.operator)
+                    changed = True
+            elif cur in idnames and op == "TJ":
+                newarr = []
+                for el in ins.operands[0]:
+                    if isinstance(el, pikepdf.String):
+                        s = bytes(el)
+                        ns = _strip_notdef_bytes(s)
+                        if ns != s:
+                            removed += (len(s) - len(ns)) // 2
+                            changed = True
+                        if ns:
+                            newarr.append(pikepdf.String(ns))
+                    else:
+                        newarr.append(el)
+                ins = pikepdf.ContentStreamInstruction(
+                    [pikepdf.Array(newarr)], ins.operator
+                )
+            new_cs.append(ins)
+        if changed:
+            page.Contents = pdf.make_stream(pikepdf.unparse_content_stream(new_cs))
+
+    if removed:
+        logger.debug("Stripped %d .notdef (CID 0) reference(s).", removed)
+    return removed

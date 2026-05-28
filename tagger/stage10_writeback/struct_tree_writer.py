@@ -208,6 +208,7 @@ def tag_untagged_pdf(
         artifact_wrap_forms,
         inject_bdc_markers,
         sanitize_cid_fonts,
+        strip_notdef_refs,
     )
 
     stats = {
@@ -216,6 +217,7 @@ def tag_untagged_pdf(
         "struct_tree_created": False,
         "links_tagged": 0,
         "cidsets_removed": 0,
+        "notdef_stripped": 0,
     }
 
     try:
@@ -556,6 +558,9 @@ def tag_untagged_pdf(
 
         # 9. Strip inherited broken CIDSet streams from embedded CID fonts.
         stats["cidsets_removed"] = sanitize_cid_fonts(pdf)
+
+        # 10. Strip inherited .notdef (CID 0) refs from Type0/Identity show ops.
+        stats["notdef_stripped"] = strip_notdef_refs(pdf)
 
         # Save
         pdf.save(str(output_path))
