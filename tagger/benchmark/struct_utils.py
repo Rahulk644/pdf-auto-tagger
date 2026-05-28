@@ -105,6 +105,40 @@ def tag_counts(path: str | Path) -> Counter | None:
         return tag_counts_open(pdf)
 
 
+def objr_referenced_objgens(pdf: pikepdf.Pdf, tag: str = "/Link") -> set:
+    """objgens of annotations referenced via OBJR from struct elems of `tag`.
+
+    The struct-tree side of "is this annotation tagged?": an annotation is tagged
+    iff some `tag` struct element (RoleMap-resolved) holds an OBJR pointing at it.
+    """
+    sr = pdf.Root.get("/StructTreeRoot")
+    if sr is None:
+        return set()
+    resolve = role_resolver(sr)
+    out: set = set()
+
+    def walk(node):
+        if not isinstance(node, Dictionary) or node.get("/S") is None:
+            return
+        if resolve(str(node.get("/S"))) == tag:
+            k = node.get("/K")
+            for o in (k if isinstance(k, Array) else [k] if k is not None else []):
+                if isinstance(o, Dictionary) and o.get("/Type") == Name.OBJR \
+                        and o.get("/Obj") is not None:
+                    try:
+                        out.add(o.get("/Obj").objgen)
+                    except Exception:
+                        pass
+        k = node.get("/K")
+        for c in (k if isinstance(k, Array) else [k] if k is not None else []):
+            walk(c)
+
+    top = sr.get("/K")
+    for node in (top if isinstance(top, Array) else [top] if top is not None else []):
+        walk(node)
+    return out
+
+
 def iter_struct_elems(pdf: pikepdf.Pdf):
     """Yield (resolved_tag, node) for every struct element (identified by /S)."""
     sr = pdf.Root.get("/StructTreeRoot")

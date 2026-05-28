@@ -102,34 +102,51 @@ def test_table_failed_no_table(tmp_path):
 
 # ------------------------------------------------------- functional_hyperlinks ---
 
-def _link_pdf(tmp_path, name, with_action):
+def _link_pdf(tmp_path, name, with_action, tagged):
+    """1-page PDF with one Link annot; optionally /A action, optionally tagged
+    by a /Link struct elem via OBJR."""
     pdf = pikepdf.new()
     pdf.add_blank_page(page_size=(612, 792))
     page = pdf.pages[0]
-    a = Dictionary({"/Subtype": Name.Link, "/Rect": Array([0, 0, 10, 10])})
+    ad = {"/Subtype": Name.Link, "/Rect": Array([0, 0, 10, 10])}
     if with_action:
-        a["/A"] = Dictionary({"/S": Name("/URI"), "/URI": pikepdf.String("https://x")})
-    page.obj["/Annots"] = Array([pdf.make_indirect(a)])
+        ad["/A"] = Dictionary({"/S": Name("/URI"), "/URI": pikepdf.String("https://x")})
+    annot = pdf.make_indirect(Dictionary(ad))
+    page.obj["/Annots"] = Array([annot])
+    if tagged:
+        link = pdf.make_indirect(Dictionary({"/S": Name("/Link"), "/K": Array([
+            Dictionary({"/Type": Name.OBJR, "/Obj": annot, "/Pg": page.obj})])}))
+        doc = pdf.make_indirect(Dictionary({"/S": Name("/Document"), "/K": Array([link])}))
+        pdf.Root["/StructTreeRoot"] = pdf.make_indirect(
+            Dictionary({"/Type": Name.StructTreeRoot, "/K": doc}))
     p = tmp_path / name
     pdf.save(str(p)); pdf.close()
     return str(p)
 
 
-def test_links_passed_with_action(tmp_path):
-    p = _link_pdf(tmp_path, "l1.pdf", True)
+def test_links_passed_action_and_tagged(tmp_path):
+    p = _link_pdf(tmp_path, "l1.pdf", with_action=True, tagged=True)
     with _open(p) as d:
         assert functional_hyperlinks.verdict(d, p).status == "passed"
 
 
+def test_links_failed_untagged(tmp_path):
+    # has /A but no Link struct elem -> the at-scale structural failure mode
+    p = _link_pdf(tmp_path, "l2.pdf", with_action=True, tagged=False)
+    with _open(p) as d:
+        v = functional_hyperlinks.verdict(d, p)
+    assert v.status == "failed" and "not tagged" in v.detail.get("note", "")
+
+
 def test_links_failed_without_action(tmp_path):
-    p = _link_pdf(tmp_path, "l2.pdf", False)
+    p = _link_pdf(tmp_path, "l3.pdf", with_action=False, tagged=True)
     with _open(p) as d:
         assert functional_hyperlinks.verdict(d, p).status == "failed"
 
 
 def test_links_none_cannot_derive(tmp_path):
     pdf = pikepdf.new(); pdf.add_blank_page(page_size=(612, 792))
-    p = tmp_path / "l3.pdf"; pdf.save(str(p)); pdf.close()
+    p = tmp_path / "l4.pdf"; pdf.save(str(p)); pdf.close()
     with _open(str(p)) as d:
         v = functional_hyperlinks.verdict(d, str(p))
     assert v.status == "cannot_derive" and v.reason == CannotDeriveReason.NoElementsOfType
