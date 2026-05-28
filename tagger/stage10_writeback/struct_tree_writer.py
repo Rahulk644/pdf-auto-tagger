@@ -303,6 +303,8 @@ def tag_untagged_pdf(
     output_path: str | Path,
     tagged_elements: list[TaggedElement],
     total_pages: int,
+    repair_mode: str = "auto",
+    approved_ids: set[str] | None = None,
 ) -> dict:
     """
     V2: Build a complete struct tree for an untagged PDF.
@@ -313,20 +315,20 @@ def tag_untagged_pdf(
     """
     from tagger.stage10_writeback.content_stream_writer import (
         artifact_wrap_forms,
+        detect_cidsets,
+        detect_missing_space_refs,
+        detect_notdef_refs,
         inject_bdc_markers,
-        sanitize_cid_fonts,
-        strip_missing_space_refs,
-        strip_notdef_refs,
     )
+    from tagger.stage10_writeback.repair_gate import gate_and_apply, write_report
 
     stats = {
         "total_elements_written": 0,
         "pages_modified": 0,
         "struct_tree_created": False,
         "links_tagged": 0,
-        "cidsets_removed": 0,
-        "notdef_stripped": 0,
-        "space_refs_stripped": 0,
+        "repair_mode": repair_mode,
+        "repair_findings": {},
         "table_cells_padded": 0,
         "headings_renumbered": 0,
     }
@@ -667,16 +669,22 @@ def tag_untagged_pdf(
         #    their own marked-content scope, untouched by page-level injection).
         artifact_wrap_forms(pdf)
 
-        # 9. Strip inherited broken CIDSet streams from embedded CID fonts.
-        stats["cidsets_removed"] = sanitize_cid_fonts(pdf)
+        # 9. Modifying font repairs (the ONLY gated surface): detect, then apply
+        #    per repair_mode. All tagging above is additive and always runs; only
+        #    these source-altering repairs (edit fonts/show strings) are gated, to
+        #    honour the PREP-safe posture. See repair_gate.py for the boundary test.
+        findings = []
+        findings += detect_cidsets(pdf)
+        findings += detect_notdef_refs(pdf)
+        findings += detect_missing_space_refs(pdf)
+        gate_and_apply(findings, repair_mode=repair_mode, approved_ids=approved_ids)
+        report = write_report(
+            findings, Path(output_path).with_suffix(".repairs.json"), repair_mode
+        )
+        stats["repair_findings"] = report["summary"]
 
-        # 10. Strip inherited .notdef (CID 0) refs from Type0/Identity show ops.
-        stats["notdef_stripped"] = strip_notdef_refs(pdf)
-
-        # 11. Strip space refs to glyph-deficient simple fonts (missing space glyph).
-        stats["space_refs_stripped"] = strip_missing_space_refs(pdf)
-
-        # 12. Normalize struct tree: uniform table columns + non-skipping headings.
+        # 10. Normalize struct tree: uniform table columns + non-skipping headings.
+        #     (Additive — reshapes our tag tree only; always runs.)
         stats["table_cells_padded"] = _normalize_table_columns(pdf, doc_elem)
         stats["headings_renumbered"] = _normalize_heading_levels(doc_elem)
 

@@ -1,6 +1,8 @@
 import logging
 import pikepdf
 
+from tagger.stage10_writeback.repair_gate import MODIFYING, Finding
+
 logger = logging.getLogger(__name__)
 
 # Text-showing operators (the only ops that consume Stage-1 characters).
@@ -314,16 +316,16 @@ def artifact_wrap_forms(pdf: pikepdf.Pdf) -> int:
     return len(processed)
 
 
-def sanitize_cid_fonts(pdf: pikepdf.Pdf) -> int:
-    """Remove broken /CIDSet streams from embedded CID FontDescriptors (clause 7.21.4.2-2).
+def detect_cidsets(pdf: pikepdf.Pdf) -> list[Finding]:
+    """Detect broken /CIDSet streams on embedded CID FontDescriptors (clause 7.21.4.2-2).
 
     PDF/UA-1 7.21.4.2 is conditional: IF a CID font's FontDescriptor has a /CIDSet
     it must identify exactly the glyphs present in the embedded program. The source
     PDFs ship subset CID fonts whose inherited /CIDSet is incorrect. UA-1 does not
     REQUIRE /CIDSet, and it is informational only (no effect on rendering), so the
-    floor fix is to delete it. Returns the number of /CIDSet streams removed.
+    repair deletes it. One MODIFYING finding per offending FontDescriptor.
     """
-    removed = 0
+    findings: list[Finding] = []
     seen: set = set()
     for page in pdf.pages:
         res = page.obj.get("/Resources")
@@ -343,13 +345,25 @@ def sanitize_cid_fonts(pdf: pikepdf.Pdf) -> int:
                 if fd is None or fd.objgen in seen:
                     continue
                 seen.add(fd.objgen)
-                if fd.get("/CIDSet") is not None:
-                    del fd["/CIDSet"]
-                    removed += 1
+                if fd.get("/CIDSet") is None:
+                    continue
+                base = str(f.get("/BaseFont"))
 
-    if removed:
-        logger.debug("Removed %d broken CIDSet stream(s).", removed)
-    return removed
+                def _apply(fd=fd):
+                    if fd.get("/CIDSet") is not None:
+                        del fd["/CIDSet"]
+
+                findings.append(Finding(
+                    clause="7.21.4.2",
+                    location=f"font {base} {tuple(fd.objgen)}",
+                    defect_description="CIDSet stream does not match the embedded font subset",
+                    proposed_repair="Delete the /CIDSet stream from the FontDescriptor",
+                    repair_type=MODIFYING,
+                    severity="blocks-compliance",
+                    auto_safe=True,
+                    apply=_apply,
+                ))
+    return findings
 
 
 def _strip_notdef_bytes(b: bytes) -> bytes:
@@ -379,60 +393,99 @@ def _identity_type0_names(page) -> set:
     return names
 
 
-def strip_notdef_refs(pdf: pikepdf.Pdf) -> int:
-    """Remove .notdef (CID 0) references from Type0/Identity show operators (clause 7.21.8-1).
+def _page_notdef_count(page) -> int:
+    """Count .notdef (CID 0) codes in Type0/Identity show ops on a page (no mutation)."""
+    idnames = _identity_type0_names(page)
+    if not idnames:
+        return 0
+    cur = None
+    count = 0
+    for ins in pikepdf.parse_content_stream(page):
+        op = str(ins.operator)
+        if op == "Tf":
+            cur = str(ins.operands[0])
+        elif cur in idnames and op in ("Tj", "'", '"'):
+            b = bytes(ins.operands[-1])
+            count += sum(1 for i in range(0, len(b) - 1, 2) if b[i] == 0 and b[i + 1] == 0)
+        elif cur in idnames and op == "TJ":
+            for el in ins.operands[0]:
+                if isinstance(el, pikepdf.String):
+                    b = bytes(el)
+                    count += sum(1 for i in range(0, len(b) - 1, 2) if b[i] == 0 and b[i + 1] == 0)
+    return count
 
-    Source documents show subset Type0 fonts where a real glyph is padded with a
-    trailing CID 0 (always .notdef in CFF). UA-1 7.21.8 forbids any .notdef
-    reference in a text-showing operator. CID 0 cannot be made non-.notdef, so the
-    fix is to delete those codes from the show strings. The padding glyphs sit at
-    the end of independently positioned runs, so removal is rendering-neutral
-    (verified pixel-identical). Returns the number of .notdef codes removed.
-    """
+
+def _strip_notdef_page(pdf: pikepdf.Pdf, page) -> int:
+    """Drop .notdef (CID 0) codes from one page's Type0/Identity show ops."""
+    idnames = _identity_type0_names(page)
+    if not idnames:
+        return 0
+    cur = None
+    changed = False
     removed = 0
-    for page in pdf.pages:
-        idnames = _identity_type0_names(page)
-        if not idnames:
-            continue
-        cur = None
-        changed = False
-        new_cs = []
-        for ins in pikepdf.parse_content_stream(page):
-            op = str(ins.operator)
-            if op == "Tf":
-                cur = str(ins.operands[0])
-            elif cur in idnames and op in ("Tj", "'", '"'):
-                s = bytes(ins.operands[-1])
-                ns = _strip_notdef_bytes(s)
-                if ns != s:
-                    removed += (len(s) - len(ns)) // 2
-                    ops = list(ins.operands)
-                    ops[-1] = pikepdf.String(ns)
-                    ins = pikepdf.ContentStreamInstruction(ops, ins.operator)
-                    changed = True
-            elif cur in idnames and op == "TJ":
-                newarr = []
-                for el in ins.operands[0]:
-                    if isinstance(el, pikepdf.String):
-                        s = bytes(el)
-                        ns = _strip_notdef_bytes(s)
-                        if ns != s:
-                            removed += (len(s) - len(ns)) // 2
-                            changed = True
-                        if ns:
-                            newarr.append(pikepdf.String(ns))
-                    else:
-                        newarr.append(el)
-                ins = pikepdf.ContentStreamInstruction(
-                    [pikepdf.Array(newarr)], ins.operator
-                )
-            new_cs.append(ins)
-        if changed:
-            page.Contents = pdf.make_stream(pikepdf.unparse_content_stream(new_cs))
-
-    if removed:
-        logger.debug("Stripped %d .notdef (CID 0) reference(s).", removed)
+    new_cs = []
+    for ins in pikepdf.parse_content_stream(page):
+        op = str(ins.operator)
+        if op == "Tf":
+            cur = str(ins.operands[0])
+        elif cur in idnames and op in ("Tj", "'", '"'):
+            s = bytes(ins.operands[-1])
+            ns = _strip_notdef_bytes(s)
+            if ns != s:
+                removed += (len(s) - len(ns)) // 2
+                ops = list(ins.operands)
+                ops[-1] = pikepdf.String(ns)
+                ins = pikepdf.ContentStreamInstruction(ops, ins.operator)
+                changed = True
+        elif cur in idnames and op == "TJ":
+            newarr = []
+            for el in ins.operands[0]:
+                if isinstance(el, pikepdf.String):
+                    s = bytes(el)
+                    ns = _strip_notdef_bytes(s)
+                    if ns != s:
+                        removed += (len(s) - len(ns)) // 2
+                        changed = True
+                    if ns:
+                        newarr.append(pikepdf.String(ns))
+                else:
+                    newarr.append(el)
+            ins = pikepdf.ContentStreamInstruction([pikepdf.Array(newarr)], ins.operator)
+        new_cs.append(ins)
+    if changed:
+        page.Contents = pdf.make_stream(pikepdf.unparse_content_stream(new_cs))
     return removed
+
+
+def detect_notdef_refs(pdf: pikepdf.Pdf) -> list[Finding]:
+    """Detect .notdef (CID 0) refs in Type0/Identity show ops (clause 7.21.8-1).
+
+    Source docs show subset Type0 fonts where a real glyph is padded with a
+    trailing CID 0 (always .notdef in CFF). UA-1 7.21.8 forbids any .notdef ref in
+    a text-showing operator; CID 0 cannot be made non-.notdef, so the repair
+    deletes those codes (run-trailing, so rendering-neutral). One MODIFYING finding
+    per affected page.
+    """
+    findings: list[Finding] = []
+    for pidx, page in enumerate(pdf.pages):
+        n = _page_notdef_count(page)
+        if n == 0:
+            continue
+
+        def _apply(page=page):
+            _strip_notdef_page(pdf, page)
+
+        findings.append(Finding(
+            clause="7.21.8",
+            location=f"page {pidx + 1}",
+            defect_description=f"{n} reference(s) to the .notdef glyph in Type0 show operators",
+            proposed_repair="Remove CID-0 (.notdef) codes from the page's show strings",
+            repair_type=MODIFYING,
+            severity="blocks-compliance",
+            auto_safe=True,
+            apply=_apply,
+        ))
+    return findings
 
 
 def _font_lacks_space(f) -> bool:
@@ -451,70 +504,109 @@ def _font_lacks_space(f) -> bool:
         return False
 
 
-def strip_missing_space_refs(pdf: pikepdf.Pdf) -> int:
-    """Remove space refs to fonts whose program lacks the glyph (clause 7.21.4.1-2).
+def _page_deficient_space(page, cache: dict) -> tuple[set, int]:
+    """Return (deficient simple-font resource names, # run-trailing space codes) on a page."""
+    res = page.obj.get("/Resources")
+    fonts = res.get("/Font") if res is not None else None
+    if fonts is None:
+        return set(), 0
+    deficient = set()
+    for n, f in fonts.items():
+        if str(f.get("/Subtype")) == "/Type0":
+            continue
+        key = f.objgen
+        if key not in cache:
+            cache[key] = _font_lacks_space(f)
+        if cache[key]:
+            deficient.add(str(n))
+    if not deficient:
+        return set(), 0
+    cur = None
+    count = 0
+    for ins in pikepdf.parse_content_stream(page):
+        op = str(ins.operator)
+        if op == "Tf":
+            cur = str(ins.operands[0])
+        elif cur in deficient and op in ("Tj", "'", '"'):
+            s = bytes(ins.operands[-1])
+            count += len(s) - len(s.rstrip(b"\x20"))
+        elif cur in deficient and op == "TJ":
+            arr = list(ins.operands[0])
+            for j in range(len(arr) - 1, -1, -1):
+                if isinstance(arr[j], pikepdf.String):
+                    s = bytes(arr[j])
+                    count += len(s) - len(s.rstrip(b"\x20"))
+                    break
+    return deficient, count
+
+
+def _strip_space_page(pdf: pikepdf.Pdf, page, deficient: set) -> int:
+    """Drop run-trailing space codes from the given deficient fonts on one page."""
+    removed = 0
+    changed = False
+    cur = None
+    new_cs = []
+    for ins in pikepdf.parse_content_stream(page):
+        op = str(ins.operator)
+        if op == "Tf":
+            cur = str(ins.operands[0])
+        elif cur in deficient and op in ("Tj", "'", '"'):
+            s = bytes(ins.operands[-1])
+            ns = s.rstrip(b"\x20")
+            if ns != s:
+                removed += len(s) - len(ns)
+                ops = list(ins.operands)
+                ops[-1] = pikepdf.String(ns)
+                ins = pikepdf.ContentStreamInstruction(ops, ins.operator)
+                changed = True
+        elif cur in deficient and op == "TJ":
+            arr = list(ins.operands[0])
+            for j in range(len(arr) - 1, -1, -1):
+                if isinstance(arr[j], pikepdf.String):
+                    s = bytes(arr[j])
+                    ns = s.rstrip(b"\x20")
+                    if ns != s:
+                        removed += len(s) - len(ns)
+                        changed = True
+                        arr[j] = pikepdf.String(ns)
+                    break
+            arr = [e for e in arr
+                   if not (isinstance(e, pikepdf.String) and len(bytes(e)) == 0)]
+            ins = pikepdf.ContentStreamInstruction([pikepdf.Array(arr)], ins.operator)
+        new_cs.append(ins)
+    if changed:
+        page.Contents = pdf.make_stream(pikepdf.unparse_content_stream(new_cs))
+    return removed
+
+
+def detect_missing_space_refs(pdf: pikepdf.Pdf) -> list[Finding]:
+    """Detect space refs to fonts whose program lacks the glyph (clause 7.21.4.1-2).
 
     Some source CFF subset fonts reference the space glyph (code 32) their embedded
     program does not contain; UA-1 7.21.4.1 requires every referenced glyph be
     present. Scoped strictly to glyph-deficient simple fonts (detected via fitz
-    has_glyph, already a pipeline dependency) so fonts that legitimately contain
-    the space are untouched. Only run-trailing spaces are removed, so rendering is
-    unaffected; struct elements' /ActualText preserves the space for assistive tech.
-    Returns the number of space codes removed.
+    has_glyph, already a pipeline dependency) so fonts that legitimately contain the
+    space are untouched; only run-trailing spaces are removed (rendering-neutral;
+    /ActualText preserves the space for AT). One MODIFYING finding per affected page.
     """
-    removed = 0
+    findings: list[Finding] = []
     cache: dict = {}
-    for page in pdf.pages:
-        res = page.obj.get("/Resources")
-        fonts = res.get("/Font") if res is not None else None
-        if fonts is None:
-            continue
-        deficient = set()
-        for n, f in fonts.items():
-            if str(f.get("/Subtype")) == "/Type0":
-                continue
-            key = f.objgen
-            if key not in cache:
-                cache[key] = _font_lacks_space(f)
-            if cache[key]:
-                deficient.add(str(n))
-        if not deficient:
+    for pidx, page in enumerate(pdf.pages):
+        deficient, count = _page_deficient_space(page, cache)
+        if count == 0:
             continue
 
-        cur = None
-        changed = False
-        new_cs = []
-        for ins in pikepdf.parse_content_stream(page):
-            op = str(ins.operator)
-            if op == "Tf":
-                cur = str(ins.operands[0])
-            elif cur in deficient and op in ("Tj", "'", '"'):
-                s = bytes(ins.operands[-1])
-                ns = s.rstrip(b"\x20")
-                if ns != s:
-                    removed += len(s) - len(ns)
-                    ops = list(ins.operands)
-                    ops[-1] = pikepdf.String(ns)
-                    ins = pikepdf.ContentStreamInstruction(ops, ins.operator)
-                    changed = True
-            elif cur in deficient and op == "TJ":
-                arr = list(ins.operands[0])
-                for j in range(len(arr) - 1, -1, -1):
-                    if isinstance(arr[j], pikepdf.String):
-                        s = bytes(arr[j])
-                        ns = s.rstrip(b"\x20")
-                        if ns != s:
-                            removed += len(s) - len(ns)
-                            changed = True
-                            arr[j] = pikepdf.String(ns)
-                        break
-                arr = [e for e in arr
-                       if not (isinstance(e, pikepdf.String) and len(bytes(e)) == 0)]
-                ins = pikepdf.ContentStreamInstruction([pikepdf.Array(arr)], ins.operator)
-            new_cs.append(ins)
-        if changed:
-            page.Contents = pdf.make_stream(pikepdf.unparse_content_stream(new_cs))
+        def _apply(page=page, deficient=deficient):
+            _strip_space_page(pdf, page, deficient)
 
-    if removed:
-        logger.debug("Stripped %d missing-space reference(s).", removed)
-    return removed
+        findings.append(Finding(
+            clause="7.21.4.1",
+            location=f"page {pidx + 1}",
+            defect_description=f"{count} space reference(s) to font(s) lacking the space glyph",
+            proposed_repair="Remove run-trailing space codes for the glyph-deficient fonts",
+            repair_type=MODIFYING,
+            severity="blocks-compliance",
+            auto_safe=True,
+            apply=_apply,
+        ))
+    return findings

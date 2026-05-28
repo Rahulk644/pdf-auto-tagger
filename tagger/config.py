@@ -315,5 +315,13 @@ class PipelineConfig:
     flask_port: int = 5002  # 5001 is PREP-QA-Tool
     flask_debug: bool = False
 
+    # Structural-repair gating (see stage10_writeback/repair_gate.py). Additive
+    # tagging always runs; these control only the source-modifying font repairs.
+    #   "auto"      — apply all modifying repairs (default; differentiator vs PREP)
+    #   "confirm"   — apply only repairs whose finding_id is in repair_approval_file
+    #   "flag-only" — never apply; only report them
+    repair_mode: str = "auto"
+    repair_approval_file: Path | None = None
+
 
 PIPELINE = PipelineConfig()

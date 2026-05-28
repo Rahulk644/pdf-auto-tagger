@@ -652,13 +652,23 @@ class AutoTaggerPipeline:
             )
         else:
             logger.info("[Stage 10] Building struct tree for untagged PDF...")
+            from tagger.config import PIPELINE
+            from tagger.stage10_writeback.repair_gate import load_approved_ids
+
             stats = tag_untagged_pdf(
                 input_pdf, output_pdf, all_tagged, doc_data.num_pages,
+                repair_mode=PIPELINE.repair_mode,
+                approved_ids=load_approved_ids(PIPELINE.repair_approval_file),
             )
             logger.info(
                 "  Writeback stats: %d elements written across %d pages",
                 stats.get("total_elements_written", 0),
                 stats.get("pages_modified", 0),
+            )
+            logger.info(
+                "  Repair gate [%s]: %s",
+                stats.get("repair_mode", "auto"),
+                stats.get("repair_findings", {}),
             )
 
     # ------------------------------------------------------------------
