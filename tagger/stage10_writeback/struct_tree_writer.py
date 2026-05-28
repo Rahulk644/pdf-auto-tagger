@@ -191,6 +191,60 @@ def _tag_link_annotations(
     return next_sp
 
 
+def _xmp_packet(title: str) -> bytes:
+    """Minimal PDF/UA XMP packet: dc:title + pdfuaid:part=1.
+
+    pdfuaid:part is included so that *adding* a Metadata stream (clause 7.1-8)
+    does not surface a separate "missing PDF/UA identifier" failure — a conforming
+    file declares its UA part. The title doubles as the displayed document title
+    (clause 7.1-10 / DisplayDocTitle).
+    """
+    from xml.sax.saxutils import escape
+
+    t = escape(title or "Untitled")
+    return (
+        '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
+        ' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+        '  <rdf:Description rdf:about=""\n'
+        '    xmlns:dc="http://purl.org/dc/elements/1.1/"\n'
+        '    xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/">\n'
+        '   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">'
+        + t +
+        '</rdf:li></rdf:Alt></dc:title>\n'
+        '   <pdfuaid:part>1</pdfuaid:part>\n'
+        '  </rdf:Description>\n'
+        ' </rdf:RDF>\n'
+        '</x:xmpmeta>\n'
+        '<?xpacket end="w"?>'
+    ).encode("utf-8")
+
+
+def _add_metadata_and_viewer_prefs(pdf, root, title: str) -> None:
+    """Add an XMP /Metadata stream (7.1-8) and DisplayDocTitle=true (7.1-10).
+
+    Both are additive catalog entries the pipeline previously never wrote (PREP
+    inputs already carried them, masking the gap). Also mirrors the title into
+    /Info and dc:title so the title veraPDF expects to display is actually present.
+    """
+    md = pdf.make_stream(_xmp_packet(title))
+    md["/Type"] = Name.Metadata
+    md["/Subtype"] = Name.XML
+    root["/Metadata"] = md
+
+    vp = root.get("/ViewerPreferences")
+    if not isinstance(vp, Dictionary):
+        vp = pdf.make_indirect(Dictionary({}))
+        root["/ViewerPreferences"] = vp
+    vp["/DisplayDocTitle"] = True
+
+    info = pdf.trailer.get("/Info")
+    if not isinstance(info, Dictionary):
+        info = pdf.make_indirect(Dictionary({}))
+        pdf.trailer["/Info"] = info
+    info["/Title"] = String(title)
+
+
 def _struct_kids(node) -> list:
     k = node.get("/K")
     if isinstance(k, Array):
@@ -664,6 +718,15 @@ def tag_untagged_pdf(
         # 7. Set language
         if "/Lang" not in root:
             root["/Lang"] = String("en-US")
+
+        # 7b. XMP /Metadata stream (7.1-8) + ViewerPreferences/DisplayDocTitle
+        #     (7.1-10). Additive catalog entries; PREP inputs already carried
+        #     them, so the pipeline never added them — the clean corpus exposed it.
+        info = pdf.trailer.get("/Info")
+        existing_title = info.get("/Title") if isinstance(info, Dictionary) else None
+        title = (str(existing_title).strip() if existing_title else "") or \
+            Path(input_path).stem.replace("_", " ").strip().title()
+        _add_metadata_and_viewer_prefs(pdf, root, title)
 
         # 8. Artifact-wrap marks inside Form XObjects (their content streams have
         #    their own marked-content scope, untouched by page-level injection).
