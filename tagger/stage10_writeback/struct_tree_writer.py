@@ -22,6 +22,7 @@ from pikepdf import Dictionary, Name, Array, String
 
 from tagger.config import WRITEBACK
 from tagger.models.data_types import PDFTag, TaggedElement
+from tagger.stage1_extraction.coord_transformer import pdf_to_standard
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,91 @@ def _mcid_k(mcids: list[int]):
     return Array(list(mcids))
 
 
+def _intersect_area(a, b) -> float:
+    """Absolute intersection area of two (x0, y0, x1, y1) boxes in one space."""
+    x0 = max(a[0], b[0])
+    y0 = max(a[1], b[1])
+    x1 = min(a[2], b[2])
+    y1 = min(a[3], b[3])
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    return (x1 - x0) * (y1 - y0)
+
+
+def _append_k_child(elem, child) -> None:
+    """Append a child struct element to elem's /K, normalizing /K to an Array.
+
+    /K may legally mix marked-content MCID integers with child struct elements,
+    so a bare int (single MCID) is promoted to an Array before appending.
+    """
+    k = elem.get("/K")
+    if k is None:
+        elem["/K"] = Array([child])
+    elif isinstance(k, Array):
+        k.append(child)
+    else:
+        elem["/K"] = Array([k, child])
+
+
+def _tag_link_annotations(
+    pdf,
+    page,
+    doc_elem,
+    owners: list[tuple[tuple, object]],
+    page_height_pt: float,
+    parent_map_entries: list,
+    next_sp: int,
+    stats: dict,
+) -> int:
+    """Bind each Link annotation on the page to a Link struct element (clause 7.18.5-1).
+
+    For every /Link annotation: create a Link struct elem holding an OBJR back to
+    the annotation, nest it under the most-overlapping block (or Document), and
+    reassign the annotation's /StructParent to a fresh ParentTree key that resolves
+    to the Link. Marked content is left untouched (link text stays under its block).
+    """
+    annots = page.obj.get("/Annots")
+    if annots is None:
+        return next_sp
+
+    for a in annots:
+        if str(a.get("/Subtype")) != "/Link":
+            continue
+        rect = a.get("/Rect")
+        if rect is None:
+            continue
+
+        rect_std = pdf_to_standard(
+            tuple(float(x) for x in rect), page_height_pt
+        )
+        owner = doc_elem
+        best = 0.0
+        for bbox, se in owners:
+            area = _intersect_area(rect_std, bbox)
+            if area > best:
+                best = area
+                owner = se
+
+        link_elem = pdf.make_indirect(Dictionary({
+            "/Type": Name.StructElem,
+            "/S": Name("/Link"),
+            "/P": owner,
+            "/K": Array([Dictionary({
+                "/Type": Name.OBJR,
+                "/Obj": a,
+                "/Pg": page.obj,
+            })]),
+        }))
+        _append_k_child(owner, link_elem)
+
+        a["/StructParent"] = next_sp
+        parent_map_entries.append((next_sp, link_elem))
+        next_sp += 1
+        stats["links_tagged"] = stats.get("links_tagged", 0) + 1
+
+    return next_sp
+
+
 def tag_untagged_pdf(
     input_path: str | Path,
     output_path: str | Path,
@@ -127,6 +213,7 @@ def tag_untagged_pdf(
         "total_elements_written": 0,
         "pages_modified": 0,
         "struct_tree_created": False,
+        "links_tagged": 0,
     }
 
     try:
@@ -160,7 +247,10 @@ def tag_untagged_pdf(
             by_page.setdefault(el.page_num, []).append(el)
 
         # 4. Build struct elements for each page
-        parent_map_entries: list[tuple[int, Array]] = []
+        parent_map_entries: list[tuple[int, object]] = []
+        # Single monotonic counter feeding both page /StructParents and annotation
+        # /StructParent keys, so the two never collide in the ParentTree number tree.
+        next_sp = 0
 
         for page_num in sorted(by_page.keys()):
             page_elements = by_page[page_num]
@@ -170,6 +260,11 @@ def tag_untagged_pdf(
                 continue
 
             page = pdf.pages[page_idx]
+            mb = page.mediabox
+            page_height_pt = float(mb[3]) - float(mb[1])
+
+            # (bbox, struct_elem) candidates for nesting Link annotations.
+            page_struct_owners: list[tuple[tuple, object]] = []
 
             # Sort elements by reading order
             page_elements.sort(key=lambda e: (e.bbox[1], e.bbox[0]))
@@ -214,6 +309,9 @@ def tag_untagged_pdf(
                             li_mcids,
                         )
                         li_struct_elems.append(li_struct)
+                        # Nest any overlapping Link under LBody (LI itself should
+                        # hold only Lbl/LBody), keeping list structure valid.
+                        page_struct_owners.append((li_el.bbox, lbody))
                         # The list item's marked content lives under LBody.
                         for m in li_mcids:
                             mcid_to_structelem[m] = lbody
@@ -267,6 +365,7 @@ def tag_untagged_pdf(
                             toci_dict["/ActualText"] = String(toci_el.text)
                         toci_struct = pdf.make_indirect(Dictionary(toci_dict))
                         toc_elem["/K"].append(toci_struct)
+                        page_struct_owners.append((toci_el.bbox, toci_struct))
                         for m in toci_mcids:
                             mcid_to_structelem[m] = toci_struct
                         stats["total_elements_written"] += 1
@@ -389,6 +488,7 @@ def tag_untagged_pdf(
                 struct_elem = pdf.make_indirect(Dictionary(struct_elem_dict))
 
                 doc_elem["/K"].append(struct_elem)
+                page_struct_owners.append((el.bbox, struct_elem))
                 for m in mcids:
                     mcid_to_structelem[m] = struct_elem
 
@@ -410,9 +510,17 @@ def tag_untagged_pdf(
                 [mcid_to_structelem.get(k, doc_elem) for k in range(n_mcids)]
             )
 
-            # Set page's StructParents
-            page.obj["/StructParents"] = len(parent_map_entries)
-            parent_map_entries.append((len(parent_map_entries), page_struct_parents))
+            # Set page's StructParents (page-level: array indexed by MCID)
+            page_key = next_sp
+            next_sp += 1
+            page.obj["/StructParents"] = page_key
+            parent_map_entries.append((page_key, page_struct_parents))
+
+            # Tag Link annotations on this page (object-level StructParent keys).
+            next_sp = _tag_link_annotations(
+                pdf, page, doc_elem, page_struct_owners,
+                page_height_pt, parent_map_entries, next_sp, stats,
+            )
 
             # Set reading order
             page.obj["/Tabs"] = Name("/S")
