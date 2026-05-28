@@ -231,6 +231,48 @@ def tag_untagged_pdf(
                     i = j
                     continue
 
+                # Check for TOC item run → wrap in TOC (mirrors LI → L).
+                # PDF/UA clause 7.2-26: every TOCI must be a child of a TOC.
+                if el.pdf_tag == PDFTag.TOCI:
+                    toci_run = [el]
+                    j = i + 1
+                    while j < len(page_elements) and page_elements[j].pdf_tag == PDFTag.TOCI:
+                        toci_run.append(page_elements[j])
+                        j += 1
+
+                    toc_elem = pdf.make_indirect(Dictionary({
+                        "/Type": Name.StructElem,
+                        "/S": Name("/TOC"),
+                        "/P": doc_elem,
+                        "/K": Array([]),
+                    }))
+
+                    for toci_el in toci_run:
+                        toci_mcids = element_to_mcids.get(toci_el.element_id, [])
+                        if not toci_mcids:
+                            continue
+                        toci_dict = {
+                            "/Type": Name.StructElem,
+                            "/S": Name("/TOCI"),
+                            "/P": toc_elem,
+                            "/K": _mcid_k(toci_mcids),
+                            "/Pg": page.obj,
+                        }
+                        if toci_el.text:
+                            toci_dict["/ActualText"] = String(toci_el.text)
+                        toci_struct = pdf.make_indirect(Dictionary(toci_dict))
+                        toc_elem["/K"].append(toci_struct)
+                        for m in toci_mcids:
+                            mcid_to_structelem[m] = toci_struct
+                        stats["total_elements_written"] += 1
+
+                    if len(toc_elem["/K"]) > 0:
+                        doc_elem["/K"].append(toc_elem)
+                        stats["total_elements_written"] += 1
+
+                    i = j
+                    continue
+
                 # TABLE nested structure
                 if el.pdf_tag == PDFTag.TABLE and el.specialist_data.get("cells"):
                     # Construct nested TR/TH/TD

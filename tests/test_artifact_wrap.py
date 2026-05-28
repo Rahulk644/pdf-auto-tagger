@@ -269,6 +269,43 @@ def test_end_to_end_table_and_list_resolve(tmp_path):
     assert _resolve_failures(out_path) == [], "table/list content MCIDs must resolve"
 
 
+def test_end_to_end_toci_wrapped_in_toc(tmp_path):
+    """Every TOCI must be a child of a TOC (PDF/UA 7.2-26), never directly under
+    Document. A consecutive TOCI run groups into one TOC."""
+    pdf = pikepdf.new()
+    p = pdf.add_blank_page(page_size=(612, 792))
+    p.obj["/Contents"] = pdf.make_stream(
+        b"BT /F1 12 Tf 72 700 Td (One) Tj ET\nBT 72 680 Td (Two) Tj ET\n"
+    )
+    input_path = tmp_path / "toc.pdf"
+    pdf.save(str(input_path))
+    pdf.close()
+
+    els = [
+        TaggedElement(element_id="c0", page_num=1, pdf_tag=PDFTag.TOCI, text="One",
+                      bbox=(72, 92, 140, 104), merged_from=[f"p1_c{i}" for i in range(0, 3)]),
+        TaggedElement(element_id="c1", page_num=1, pdf_tag=PDFTag.TOCI, text="Two",
+                      bbox=(72, 112, 140, 124), merged_from=[f"p1_c{i}" for i in range(3, 6)]),
+    ]
+    out_path = tmp_path / "toc_out.pdf"
+    tag_untagged_pdf(str(input_path), str(out_path), els, total_pages=1)
+
+    assert _resolve_failures(out_path) == [], "TOCI content MCIDs must resolve"
+
+    with pikepdf.open(str(out_path)) as o:
+        doc = o.Root.StructTreeRoot.K
+        doc_kids = list(doc.K)
+        tocs = [k for k in doc_kids if str(k.get("/S")) == "/TOC"]
+        assert len(tocs) == 1, f"expected one TOC container, got {len(tocs)}"
+        tocis = list(tocs[0].K)
+        assert len(tocis) == 2, "TOC should hold both TOCI entries"
+        for t in tocis:
+            assert str(t.get("/S")) == "/TOCI"
+            assert str(t.P.get("/S")) == "/TOC", "TOCI parent must be TOC"
+        assert not [k for k in doc_kids if str(k.get("/S")) == "/TOCI"], \
+            "no TOCI may sit directly under Document"
+
+
 def test_artifact_element_never_gets_mcid(tmp_path):
     """An ARTIFACT element's glyphs must become a plain /Artifact BMC, never a
     `/Artifact <</MCID>>` BDC (which is artifact-tagged-as-real-content and fails
