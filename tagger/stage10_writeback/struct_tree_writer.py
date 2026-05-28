@@ -105,7 +105,10 @@ def tag_untagged_pdf(
     StructElem for each tagged element, and /Tabs /S on pages.
     Also injects BDC/EMC operators into the content streams.
     """
-    from tagger.stage10_writeback.content_stream_writer import inject_bdc_markers
+    from tagger.stage10_writeback.content_stream_writer import (
+        artifact_wrap_forms,
+        inject_bdc_markers,
+    )
 
     stats = {
         "total_elements_written": 0,
@@ -366,6 +369,10 @@ def tag_untagged_pdf(
         # 7. Set language
         if "/Lang" not in root:
             root["/Lang"] = String("en-US")
+
+        # 8. Artifact-wrap marks inside Form XObjects (their content streams have
+        #    their own marked-content scope, untouched by page-level injection).
+        artifact_wrap_forms(pdf)
 
         # Save
         pdf.save(str(output_path))
