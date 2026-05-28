@@ -273,6 +273,78 @@ def _add_metadata_and_viewer_prefs(pdf, root, title: str) -> None:
     info["/Title"] = String(title)
 
 
+# Annotation subtypes that must NOT be wrapped in an Annot struct element:
+# Link gets its own /Link tag (see _tag_link_annotations); Widget/PrinterMark
+# are excluded by clause 7.18.1-1; Popup is auxiliary to its parent markup.
+_UNTAGGED_ANNOT_SUBTYPES = frozenset({"/Link", "/Widget", "/PrinterMark", "/Popup"})
+
+
+def _tag_markup_annotations(
+    pdf,
+    page,
+    doc_elem,
+    owners: list[tuple[tuple, object]],
+    page_height_pt: float,
+    parent_map_entries: list,
+    next_sp: int,
+    stats: dict,
+) -> int:
+    """Nest each non-Link markup annotation in an Annot struct element (clause 7.18.1-1).
+
+    Mirrors _tag_link_annotations but emits /S /Annot: for every annotation whose
+    subtype is not Link/Widget/PrinterMark/Popup (and not hidden), create an Annot
+    struct elem holding an OBJR to it, nest under the best-overlapping block (or
+    Document), give it a fresh /StructParent, and add /Contents if absent. Purely
+    additive — the annotation's appearance and content are untouched.
+    """
+    annots = page.obj.get("/Annots")
+    if annots is None:
+        return next_sp
+
+    for a in annots:
+        if str(a.get("/Subtype")) in _UNTAGGED_ANNOT_SUBTYPES:
+            continue
+        if a.get("/StructParent") is not None:
+            continue  # already tagged
+        f = a.get("/F")
+        if f is not None and (int(f) & 2):  # Hidden flag — do not tag
+            continue
+        rect = a.get("/Rect")
+        if rect is None:
+            continue
+
+        rect_std = pdf_to_standard(tuple(float(x) for x in rect), page_height_pt)
+        owner = doc_elem
+        best = 0.0
+        for bbox, se in owners:
+            area = _intersect_area(rect_std, bbox)
+            if area > best:
+                best = area
+                owner = se
+
+        annot_elem = pdf.make_indirect(Dictionary({
+            "/Type": Name.StructElem,
+            "/S": Name("/Annot"),
+            "/P": owner,
+            "/K": Array([Dictionary({
+                "/Type": Name.OBJR,
+                "/Obj": a,
+                "/Pg": page.obj,
+            })]),
+        }))
+        _append_k_child(owner, annot_elem)
+
+        if a.get("/Contents") is None:
+            a["/Contents"] = String(_link_alt_text(a, owner))
+
+        a["/StructParent"] = next_sp
+        parent_map_entries.append((next_sp, annot_elem))
+        next_sp += 1
+        stats["annots_tagged"] = stats.get("annots_tagged", 0) + 1
+
+    return next_sp
+
+
 def _struct_kids(node) -> list:
     k = node.get("/K")
     if isinstance(k, Array):
@@ -410,6 +482,7 @@ def tag_untagged_pdf(
         "pages_modified": 0,
         "struct_tree_created": False,
         "links_tagged": 0,
+        "annots_tagged": 0,
         "repair_mode": repair_mode,
         "repair_findings": {},
         "table_cells_padded": 0,
@@ -718,6 +791,12 @@ def tag_untagged_pdf(
 
             # Tag Link annotations on this page (object-level StructParent keys).
             next_sp = _tag_link_annotations(
+                pdf, page, doc_elem, page_struct_owners,
+                page_height_pt, parent_map_entries, next_sp, stats,
+            )
+
+            # Tag remaining markup annotations (FreeText, etc.) as /Annot.
+            next_sp = _tag_markup_annotations(
                 pdf, page, doc_elem, page_struct_owners,
                 page_height_pt, parent_map_entries, next_sp, stats,
             )
