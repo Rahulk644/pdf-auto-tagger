@@ -268,6 +268,25 @@ def test_end_to_end_table_and_list_resolve(tmp_path):
 
     assert _resolve_failures(out_path) == [], "table/list content MCIDs must resolve"
 
+    # LI must be parented (via /P) by the L container, not Document (clause 7.2-17).
+    with pikepdf.open(str(out_path)) as o:
+        def find_lis(node, out):
+            if not isinstance(node, pikepdf.Dictionary):
+                return
+            if str(node.get("/S")) == "/LI":
+                out.append(node)
+            k = node.get("/K")
+            if isinstance(k, pikepdf.Array):
+                for c in k:
+                    find_lis(c, out)
+            elif isinstance(k, pikepdf.Dictionary):
+                find_lis(k, out)
+        lis = []
+        find_lis(o.Root.StructTreeRoot.K, lis)
+        assert lis, "expected LI elements"
+        for li in lis:
+            assert str(li.P.get("/S")) == "/L", "LI parent (/P) must be L"
+
 
 def test_end_to_end_toci_wrapped_in_toc(tmp_path):
     """Every TOCI must be a child of a TOC (PDF/UA 7.2-26), never directly under

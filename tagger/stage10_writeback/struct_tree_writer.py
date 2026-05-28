@@ -226,6 +226,11 @@ def tag_untagged_pdf(
                             "/P": doc_elem,
                             "/K": li_struct_elems,
                         }))
+                        # Re-parent each LI to the L container. _build_list_item_struct
+                        # sets /P to doc_elem (the L doesn't exist yet); veraPDF reads
+                        # /P for parentStandardType, so an unfixed /P fails clause 7.2-17.
+                        for li_struct in li_struct_elems:
+                            li_struct["/P"] = list_elem
                         doc_elem["/K"].append(list_elem)
 
                     i = j
