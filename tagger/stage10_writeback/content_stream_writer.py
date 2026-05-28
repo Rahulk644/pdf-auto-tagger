@@ -582,6 +582,63 @@ def _strip_space_page(pdf: pikepdf.Pdf, page, deficient: set) -> int:
     return removed
 
 
+def detect_unembedded_fonts(pdf: pikepdf.Pdf) -> list[Finding]:
+    """Detect fonts whose program is not embedded (clause 7.21.4.1-1).
+
+    PDF/UA-1 requires every font to be embedded. The clean corpus sources use
+    system fonts (Arial, Times New Roman) the producer never embedded — an
+    INHERITED source defect, not one the pipeline introduces. Embedding a
+    substitute is a MODIFYING repair that ALTERS rendering (different glyph
+    outlines) and carries licensing concerns, so it is NOT auto-safe and we ship
+    no automatic apply: the finding is surfaced (report-only) through the gate
+    rather than silently embedding a font. One finding per non-embedded font.
+    """
+    findings: list[Finding] = []
+    seen: set = set()
+
+    def _descriptors(f):
+        if str(f.get("/Subtype")) == "/Type0":
+            for df in (f.get("/DescendantFonts") or []):
+                yield df.get("/FontDescriptor")
+        else:
+            yield f.get("/FontDescriptor")
+
+    for page in pdf.pages:
+        res = page.obj.get("/Resources")
+        fonts = res.get("/Font") if res is not None else None
+        if fonts is None:
+            continue
+        for _name, f in fonts.items():
+            base = str(f.get("/BaseFont"))
+            for fd in _descriptors(f):
+                # Key on the descriptor (or the font itself for the no-descriptor
+                # standard-14 case) so a font used on several pages counts once.
+                key = fd.objgen if fd is not None else f.objgen
+                if key in seen:
+                    continue
+                seen.add(key)
+                if fd is not None and any(
+                    fd.get(k) is not None
+                    for k in ("/FontFile", "/FontFile2", "/FontFile3")
+                ):
+                    continue  # embedded
+                findings.append(Finding(
+                    clause="7.21.4.1",
+                    location=f"font {base} {tuple(key)}",
+                    defect_description="Font program is not embedded",
+                    proposed_repair=(
+                        "Embed the font program (or a metrically compatible "
+                        "substitute); not applied automatically — rendering-"
+                        "altering and licensing-sensitive"
+                    ),
+                    repair_type=MODIFYING,
+                    severity="blocks-compliance",
+                    auto_safe=False,
+                    apply=None,
+                ))
+    return findings
+
+
 def detect_missing_space_refs(pdf: pikepdf.Pdf) -> list[Finding]:
     """Detect space refs to fonts whose program lacks the glyph (clause 7.21.4.1-2).
 

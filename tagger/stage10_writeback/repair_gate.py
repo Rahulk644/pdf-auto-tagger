@@ -11,8 +11,11 @@ NON-accessibility tool sees — existing content, fonts, real objects? If yes it
 `MODIFYING` and gated; if it only adds or cleans up the accessibility layer it is
 `ADDITIVE` and runs unconditionally.
 
-Gated surface today = the 3 font repairs (CIDSet delete, .notdef strip, missing-
-space strip). Everything else is additive and runs inline during tagging.
+Gated surface today = font repairs only: three auto-safe, rendering-neutral
+repairs that auto-apply (CIDSet delete, .notdef strip, missing-space strip) and
+one report-only finding (unembedded font) that is surfaced but never auto-applied
+because embedding a substitute alters rendering. Everything else is additive and
+runs inline during tagging.
 """
 
 from __future__ import annotations
@@ -78,9 +81,16 @@ def gate_and_apply(
 ) -> list[Finding]:
     """Apply findings per mode, stamping each with a terminal status.
 
-    Additive findings are always applied. Modifying findings: `auto` applies all,
-    `confirm` applies only those whose finding_id is in `approved_ids`, `flag-only`
-    applies none. Mutates each finding's `status` in place; returns the list.
+    Additive findings are always applied. Modifying findings:
+      - report-only (apply is None): never applied — surfaced as `reported` in
+        every mode (e.g. unembedded fonts, where we ship no automatic embed).
+      - `auto`: applies auto-safe (rendering-neutral) repairs; a non-auto-safe
+        repair (alters rendering) is held `pending` even in auto, so the gate
+        never silently changes how the document looks.
+      - `confirm`: applies only those whose finding_id is in `approved_ids`
+        (explicit approval overrides auto_safe); others `pending`.
+      - `flag-only`: applies none; all `reported`.
+    Mutates each finding's `status` in place; returns the list.
     """
     if repair_mode not in MODES:
         raise ValueError(f"unknown repair_mode {repair_mode!r}; expected one of {MODES}")
@@ -91,8 +101,13 @@ def gate_and_apply(
             _apply(f)
             continue
         # modifying
-        if repair_mode == AUTO:
-            _apply(f)
+        if f.apply is None:
+            f.status = "reported"  # detected but no automatic repair available
+        elif repair_mode == AUTO:
+            if f.auto_safe:
+                _apply(f)
+            else:
+                f.status = "pending"  # rendering-altering: require explicit confirm
         elif repair_mode == CONFIRM:
             if f.finding_id in approved:
                 _apply(f)

@@ -400,6 +400,7 @@ def tag_untagged_pdf(
         detect_cidsets,
         detect_missing_space_refs,
         detect_notdef_refs,
+        detect_unembedded_fonts,
         inject_bdc_markers,
     )
     from tagger.stage10_writeback.repair_gate import gate_and_apply, write_report
@@ -768,6 +769,7 @@ def tag_untagged_pdf(
         findings += detect_cidsets(pdf)
         findings += detect_notdef_refs(pdf)
         findings += detect_missing_space_refs(pdf)
+        findings += detect_unembedded_fonts(pdf)
         gate_and_apply(findings, repair_mode=repair_mode, approved_ids=approved_ids)
         report = write_report(
             findings, Path(output_path).with_suffix(".repairs.json"), repair_mode
