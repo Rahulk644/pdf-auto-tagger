@@ -2,8 +2,49 @@ import logging
 import pikepdf
 
 from tagger.stage10_writeback.repair_gate import MODIFYING, Finding
+from tagger.stage1_extraction.coord_transformer import pdf_to_standard
 
 logger = logging.getLogger(__name__)
+
+
+def _affine_mul(m1: tuple, m2: tuple) -> tuple:
+    """Compose two PDF affine matrices (6-tuples); m1 is applied first.
+
+    A point transforms as [x y 1] · M. Concatenating cm (m1) onto the CTM (m2)
+    gives a matrix where the image's unit square is mapped by m1 then m2.
+    """
+    a1, b1, c1, d1, e1, f1 = m1
+    a2, b2, c2, d2, e2, f2 = m2
+    return (
+        a1 * a2 + b1 * c2,
+        a1 * b2 + b1 * d2,
+        c1 * a2 + d1 * c2,
+        c1 * b2 + d1 * d2,
+        e1 * a2 + f1 * c2 + e2,
+        e1 * b2 + f1 * d2 + f2,
+    )
+
+
+def _image_rect_std(ctm: tuple, page_height_pt: float) -> tuple:
+    """Device-space rect (standard 150-DPI, top-left) an image Do/inline image fills.
+
+    An image is painted by mapping the unit square [0,1]^2 through the CTM, so its
+    placement rect is the bbox of the four transformed corners (in PDF points),
+    converted to the standard coordinate space the Figure bboxes live in.
+    """
+    a, b, c, d, e, f = ctm
+    xs, ys = [], []
+    for x, y in ((0, 0), (1, 0), (0, 1), (1, 1)):
+        xs.append(a * x + c * y + e)
+        ys.append(b * x + d * y + f)
+    return pdf_to_standard((min(xs), min(ys), max(xs), max(ys)), page_height_pt)
+
+
+def _overlap_area(a: tuple, b: tuple) -> float:
+    """Intersection area of two (x0,y0,x1,y1) boxes in one coordinate space."""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    return ix * iy
 
 # Text-showing operators (the only ops that consume Stage-1 characters).
 _TEXT_OPS = {"Tj", "TJ", "'", '"'}
@@ -58,7 +99,8 @@ def _text_len(instruction, op: str) -> int:
     return len(str(instruction.operands[0]))
 
 
-def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype):
+def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype,
+                    figure_boxes=None, page_height_pt=None):
     """Run the marked-content state machine over a parsed content stream.
 
     Guarantees that every mark-producing operator ends up inside either a tagged
@@ -88,6 +130,8 @@ def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype):
     next_mcid = 0
     current_char_idx = 0
     active = None  # None | ("tag", key) | ("art",)
+    ctm = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    ctm_stack: list = []
 
     def close():
         nonlocal active
@@ -111,6 +155,21 @@ def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype):
         new_cs.append(_artifact_bmc())
         active = ("art",)
 
+    def match_figure(cur_ctm):
+        """Figure element_id this image best falls within, else None."""
+        if not figure_boxes or page_height_pt is None:
+            return None
+        rect = _image_rect_std(cur_ctm, page_height_pt)
+        img_area = max(1e-6, (rect[2] - rect[0]) * (rect[3] - rect[1]))
+        best_key, best_cov = None, 0.0
+        for bbox, key in figure_boxes:
+            cov = _overlap_area(rect, bbox) / img_area
+            if cov > best_cov:
+                best_cov, best_key = cov, key
+        # Require the image to lie mostly inside the figure region (avoids
+        # claiming a decorative/background image that merely grazes a figure).
+        return best_key if best_cov >= 0.5 else None
+
     for ins in instructions:
         op = str(ins.operator)
 
@@ -131,6 +190,19 @@ def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype):
         if op in _GSTATE_BARRIERS:
             if active == ("art",):
                 close()
+            if op == "q":
+                ctm_stack.append(ctm)
+            elif op == "Q" and ctm_stack:
+                ctm = ctm_stack.pop()
+            new_cs.append(ins)
+            continue
+        if op == "cm":
+            try:
+                m = tuple(float(x) for x in ins.operands)
+                if len(m) == 6:
+                    ctm = _affine_mul(m, ctm)
+            except Exception:
+                pass
             new_cs.append(ins)
             continue
 
@@ -161,6 +233,17 @@ def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype):
                     # Form invocation produces no marks itself; the form pass
                     # wraps the marks inside its content stream.
                     new_cs.append(ins)
+                    continue
+            # Image op (image Do or inline image): if it lies within a Figure
+            # region, tag it as /Figure marked content so Stage 10 builds a
+            # /Figure struct elem (with /Alt) instead of artifact-wrapping it.
+            if op in ("Do", "INLINE IMAGE"):
+                fig = match_figure(ctm)
+                if fig is not None:
+                    close()
+                    open_tag(fig)
+                    new_cs.append(ins)
+                    close()  # the Figure MCID wraps exactly this image op
                     continue
             if active != ("art",):
                 close()
@@ -247,11 +330,23 @@ def inject_bdc_markers(
             key_to_tag[el.element_id] = el.pdf_tag.value
             _map_chars(el.merged_from, el.element_id)
 
+    # Figure regions (image-only, so they carry no char mappings): image paint
+    # ops whose placement falls inside one are tagged /Figure instead of being
+    # artifact-wrapped, so Stage 10 can build a /Figure struct elem with /Alt.
+    figure_boxes = [
+        (el.bbox, el.element_id)
+        for el in tagged_elements
+        if el.page_num == page_num and el.pdf_tag.value == "Figure"
+    ]
+    mb = page.obj.get("/MediaBox") or page.mediabox
+    page_height_pt = float(mb[3]) - float(mb[1])
+
     # 2. Parse and rewrite the content stream. Even with no tagged text we still
     #    run the state machine so bare graphics get artifact-wrapped.
     cs = pikepdf.parse_content_stream(page)
     new_cs, element_to_mcids, mcid_to_element, mcid_to_tag = _rewrite_stream(
-        cs, char_to_key, key_to_tag, _xobject_subtype_resolver(page.obj)
+        cs, char_to_key, key_to_tag, _xobject_subtype_resolver(page.obj),
+        figure_boxes, page_height_pt,
     )
 
     # 3. Write back the new content stream
