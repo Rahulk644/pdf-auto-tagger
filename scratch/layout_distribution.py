@@ -21,7 +21,7 @@ from collections import Counter
 from pathlib import Path
 
 import pikepdf
-from pikepdf import Array, Dictionary, Name
+from pikepdf import Array, Dictionary
 
 _PREP = Path("/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs")
 _OURS = Path("/Users/rahulkhatri/Tagger/output_modal")
@@ -45,18 +45,27 @@ COLUMNS = [
 
 
 def tag_counts(path: str | Path) -> Counter | None:
-    """Count struct-element /S tags in a PDF's struct tree (None if untagged)."""
+    """Count struct-element /S tags in a PDF's struct tree (None if untagged).
+
+    Identifies struct elements by /S PRESENCE (the /Type /StructElem key is
+    OPTIONAL per ISO 32000 and absent in many real PDFs) and resolves each /S
+    through /RoleMap to its standard type, so custom-tagged external PDFs are
+    counted correctly rather than undercounted.
+    """
+    from layout_tokens import role_resolver
+
     with pikepdf.open(str(path)) as pdf:
         sr = pdf.Root.get("/StructTreeRoot")
         if sr is None:
             return None
+        resolve = role_resolver(sr)
         counts: Counter = Counter()
 
         def walk(node):
             if not isinstance(node, Dictionary):
                 return
-            if node.get("/Type") == Name.StructElem and node.get("/S") is not None:
-                counts[str(node.get("/S"))] += 1
+            if node.get("/S") is not None:
+                counts[resolve(str(node.get("/S")))] += 1
             k = node.get("/K")
             for c in (k if isinstance(k, Array) else [k] if k is not None else []):
                 walk(c)
