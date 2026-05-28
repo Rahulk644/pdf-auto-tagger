@@ -312,3 +312,41 @@ def artifact_wrap_forms(pdf: pikepdf.Pdf) -> int:
     if processed:
         logger.debug("Artifact-wrapped %d form XObject(s).", len(processed))
     return len(processed)
+
+
+def sanitize_cid_fonts(pdf: pikepdf.Pdf) -> int:
+    """Remove broken /CIDSet streams from embedded CID FontDescriptors (clause 7.21.4.2-2).
+
+    PDF/UA-1 7.21.4.2 is conditional: IF a CID font's FontDescriptor has a /CIDSet
+    it must identify exactly the glyphs present in the embedded program. The source
+    PDFs ship subset CID fonts whose inherited /CIDSet is incorrect. UA-1 does not
+    REQUIRE /CIDSet, and it is informational only (no effect on rendering), so the
+    floor fix is to delete it. Returns the number of /CIDSet streams removed.
+    """
+    removed = 0
+    seen: set = set()
+    for page in pdf.pages:
+        res = page.obj.get("/Resources")
+        if res is None:
+            continue
+        fonts = res.get("/Font")
+        if fonts is None:
+            continue
+        for _name, f in fonts.items():
+            if str(f.get("/Subtype")) != "/Type0":
+                continue
+            dfs = f.get("/DescendantFonts")
+            if dfs is None:
+                continue
+            for df in dfs:
+                fd = df.get("/FontDescriptor")
+                if fd is None or fd.objgen in seen:
+                    continue
+                seen.add(fd.objgen)
+                if fd.get("/CIDSet") is not None:
+                    del fd["/CIDSet"]
+                    removed += 1
+
+    if removed:
+        logger.debug("Removed %d broken CIDSet stream(s).", removed)
+    return removed

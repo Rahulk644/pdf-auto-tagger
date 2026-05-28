@@ -207,6 +207,7 @@ def tag_untagged_pdf(
     from tagger.stage10_writeback.content_stream_writer import (
         artifact_wrap_forms,
         inject_bdc_markers,
+        sanitize_cid_fonts,
     )
 
     stats = {
@@ -214,6 +215,7 @@ def tag_untagged_pdf(
         "pages_modified": 0,
         "struct_tree_created": False,
         "links_tagged": 0,
+        "cidsets_removed": 0,
     }
 
     try:
@@ -551,6 +553,9 @@ def tag_untagged_pdf(
         # 8. Artifact-wrap marks inside Form XObjects (their content streams have
         #    their own marked-content scope, untouched by page-level injection).
         artifact_wrap_forms(pdf)
+
+        # 9. Strip inherited broken CIDSet streams from embedded CID fonts.
+        stats["cidsets_removed"] = sanitize_cid_fonts(pdf)
 
         # Save
         pdf.save(str(output_path))
