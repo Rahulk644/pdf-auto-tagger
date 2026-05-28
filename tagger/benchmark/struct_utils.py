@@ -105,6 +105,26 @@ def tag_counts(path: str | Path) -> Counter | None:
         return tag_counts_open(pdf)
 
 
+def iter_struct_elems(pdf: pikepdf.Pdf):
+    """Yield (resolved_tag, node) for every struct element (identified by /S)."""
+    sr = pdf.Root.get("/StructTreeRoot")
+    if sr is None:
+        return
+    resolve = role_resolver(sr)
+
+    def walk(node):
+        if not isinstance(node, Dictionary) or node.get("/S") is None:
+            return
+        yield (resolve(str(node.get("/S"))), node)
+        k = node.get("/K")
+        for c in (k if isinstance(k, Array) else [k] if k is not None else []):
+            yield from walk(c)
+
+    top = sr.get("/K")
+    for node in (top if isinstance(top, Array) else [top] if top is not None else []):
+        yield from walk(node)
+
+
 def struct_order_mcids(pdf: pikepdf.Pdf) -> list:
     """[(page_index, mcid)] in struct-tree traversal (= assistive reading) order."""
     sr = pdf.Root.get("/StructTreeRoot")

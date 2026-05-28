@@ -55,6 +55,8 @@ def derive_verdict(pdf_path: str, criterion: str) -> Verdict:
     (MissingFeature) so the scorecard reports them as "not addressed", never failed.
     """
     from tagger.benchmark.verdicts import (
+        alt_text,
+        font_embedding,
         functional_hyperlinks,
         logical_reading_order,
         semantic_tagging,
@@ -66,6 +68,12 @@ def derive_verdict(pdf_path: str, criterion: str) -> Verdict:
         "table_structure": table_structure.verdict,
         "functional_hyperlinks": functional_hyperlinks.verdict,
         "logical_reading_order": logical_reading_order.verdict,
+        # alt_text_quality PRIMARY = deterministic presence (5a); the Gemma quality
+        # sub-axis (5b) is reported separately via gemma_quality, not here.
+        "alt_text_quality": alt_text.verdict,
+        # font_embedding = adjacent axis (NOT the benchmark's fonts_readability,
+        # which is not-addressed -> MissingFeature below).
+        "font_embedding": font_embedding.verdict,
     }
     fn = dispatch.get(criterion)
     if fn is None:
