@@ -9,7 +9,10 @@ logger = logging.getLogger(__name__)
 _TEXT_OPS = {"Tj", "TJ", "'", '"'}
 # Operators that paint visible marks directly on the current content stream.
 # (Do is resolved further: /Image marks here, /Form recurses separately.)
-_PAINT_OPS = {"f", "F", "f*", "S", "s", "B", "B*", "b", "b*", "sh", "Do", "INLINE_IMAGE"}
+# NB: pikepdf names the inline-image op "INLINE IMAGE" (with a space), not
+# "INLINE_IMAGE" — the underscore form never matched, leaving inline images
+# (e.g. raster fills inside chart Form XObjects) bare and failing clause 7.1-3.
+_PAINT_OPS = {"f", "F", "f*", "S", "s", "B", "B*", "b", "b*", "sh", "Do", "INLINE IMAGE"}
 # Graphics-state barriers. A marked-content sequence must not straddle these,
 # so any open *artifact* sequence is closed before them (tagged sequences are
 # left open to avoid splitting one element's MCID across multiple sequences).
