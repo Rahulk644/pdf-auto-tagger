@@ -23,15 +23,28 @@ from tagger.models.data_types import PDFTag, TaggedElement
 logger = logging.getLogger(__name__)
 
 
-def detect_artifacts(elements: list[TaggedElement], total_pages: int) -> list[TaggedElement]:
+def detect_artifacts(
+    elements: list[TaggedElement],
+    total_pages: int | None = None,
+    page_heights: dict[int, float] | None = None,
+) -> list[TaggedElement]:
     """
     Detect running headers, footers, and page numbers.
 
-    Scans all elements across pages for repeated text/position patterns.
-    Matches are re-tagged as Artifact.
+    Three complementary passes, each re-tagging matches as Artifact:
+      1. Repeated text at the same Y across pages (running headers/footers).
+      2. Page numbers at consistent Y across pages.
+      3. Margin-band furniture — short content in the top/bottom margin of a
+         single page. This needs no cross-page repetition, so it catches page
+         numbers and running headers on short excerpts and recto/verso docs the
+         repetition passes miss. Requires ``page_heights`` (standard-DPI page
+         height per page_num); skipped when not provided.
 
     Modifies elements in-place and returns the same list.
     """
+    if total_pages is None:
+        total_pages = max((el.page_num for el in elements), default=0)
+
     artifact_count = 0
 
     # Group elements by (normalized_text, y_band) across pages
@@ -40,8 +53,57 @@ def detect_artifacts(elements: list[TaggedElement], total_pages: int) -> list[Ta
     # Detect page numbers (sequential integers at consistent positions)
     artifact_count += _detect_page_numbers(elements, total_pages)
 
+    # Single-page margin-band furniture (generalizes to short excerpts)
+    if page_heights:
+        artifact_count += _detect_margin_furniture(elements, page_heights)
+
     logger.info("Artifact detector: tagged %d elements as Artifact", artifact_count)
     return elements
+
+
+# Tags that page furniture is typically (mis)assigned: body paragraphs and
+# headings. Figures/tables/captions/formulas in the band are real content and
+# are never reclassified.
+_FURNITURE_ELIGIBLE = frozenset({
+    PDFTag.P, PDFTag.H1, PDFTag.H2, PDFTag.H3, PDFTag.H4, PDFTag.H5, PDFTag.H6,
+})
+
+
+def _detect_margin_furniture(
+    elements: list[TaggedElement], page_heights: dict[int, float]
+) -> int:
+    """Tag short content in a page's top/bottom margin band as Artifact.
+
+    Single-page rule: an eligible element whose vertical center lies within the
+    top or bottom ``artifact_margin_band_fraction`` of its page and whose text
+    is short (<= ``artifact_max_furniture_words``) is running-header/footer/
+    page-number furniture. Reclassifying it removes no real content.
+    """
+    cfg = SEMANTIC
+    band = cfg.artifact_margin_band_fraction
+    tagged = 0
+
+    for el in elements:
+        if el.pdf_tag == PDFTag.ARTIFACT or el.pdf_tag not in _FURNITURE_ELIGIBLE:
+            continue
+        ph = page_heights.get(el.page_num)
+        if not ph:
+            continue
+        y_center = (el.bbox[1] + el.bbox[3]) / 2.0
+        frac = y_center / ph
+        if not (frac < band or frac > 1.0 - band):
+            continue
+        words = len((el.text or "").split())
+        if words == 0 or words > cfg.artifact_max_furniture_words:
+            continue
+        el.pdf_tag = PDFTag.ARTIFACT
+        tagged += 1
+        logger.debug(
+            "Margin-furniture artifact (page %d, frac=%.3f): '%s'",
+            el.page_num, frac, (el.text or "").strip()[:40],
+        )
+
+    return tagged
 
 
 def _detect_repeated_text(elements: list[TaggedElement], total_pages: int) -> int:

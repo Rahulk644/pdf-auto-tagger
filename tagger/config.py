@@ -230,6 +230,18 @@ class SemanticConfig:
     # Artifact: Y-position tolerance (standard DPI points)
     artifact_y_tolerance_px: float = 5.0
 
+    # Artifact: page-furniture margin band as a fraction of page height. An
+    # element whose vertical center falls within the top or bottom band is a
+    # running-header/footer/page-number candidate. Single-page (no cross-page
+    # repetition required), so it generalizes to short excerpts and recto/verso
+    # docs. 0.09 cleanly separates furniture (observed <=0.07) from real
+    # headings/body (observed >=0.11) on the clean corpus.
+    artifact_margin_band_fraction: float = 0.09
+
+    # Artifact: a margin-band element with more words than this is treated as
+    # real content (a body line that begins inside the band), not furniture.
+    artifact_max_furniture_words: int = 12
+
     # Caption regex patterns
     caption_patterns: tuple[str, ...] = (
         r"^(Figure|Fig\.?|Table|Tbl\.?)\s*\d+",

@@ -125,6 +125,61 @@ class TestArtifactDetector:
         assert len(artifacts) >= 3
 
 
+class TestMarginFurniture:
+    """Single-page margin-band furniture detection (no cross-page repetition)."""
+
+    PH = {1: 1000.0, 2: 1000.0}  # standard-DPI page heights
+
+    def test_page_number_single_page(self):
+        """A page number in the top margin is artifacted on its own page."""
+        els = [_make_tagged("16", PDFTag.P, page=2, y=40, eid="e1")]  # frac ~0.05
+        detect_artifacts(els, page_heights=self.PH)
+        assert els[0].pdf_tag == PDFTag.ARTIFACT
+
+    def test_roman_numeral_page_number(self):
+        """Roman-numeral page numbers ('xi') the digit passes miss are caught."""
+        els = [_make_tagged("xi", PDFTag.P, page=1, y=40, eid="e1")]
+        detect_artifacts(els, page_heights=self.PH)
+        assert els[0].pdf_tag == PDFTag.ARTIFACT
+
+    def test_running_header_in_band(self):
+        """A short running header high in the page becomes an Artifact."""
+        els = [_make_tagged("Table of Contents", PDFTag.P, page=1, y=40, eid="e1")]
+        detect_artifacts(els, page_heights=self.PH)
+        assert els[0].pdf_tag == PDFTag.ARTIFACT
+
+    def test_footer_in_bottom_band(self):
+        """Furniture in the bottom margin band is caught too."""
+        els = [_make_tagged("62", PDFTag.P, page=1, y=960, eid="e1")]  # frac ~0.97
+        detect_artifacts(els, page_heights=self.PH)
+        assert els[0].pdf_tag == PDFTag.ARTIFACT
+
+    def test_real_heading_below_band_spared(self):
+        """A real heading just below the top margin (frac ~0.11) is NOT touched."""
+        els = [_make_tagged("Introduction", PDFTag.H1, page=1, y=105, eid="e1")]
+        detect_artifacts(els, page_heights=self.PH)
+        assert els[0].pdf_tag == PDFTag.H1
+
+    def test_long_line_in_band_spared(self):
+        """A long line that begins inside the band is real content, not furniture."""
+        text = "this is a long opening body line that happens to start very high"
+        els = [_make_tagged(text, PDFTag.P, page=1, y=40, eid="e1")]
+        detect_artifacts(els, page_heights=self.PH)
+        assert els[0].pdf_tag == PDFTag.P
+
+    def test_figure_in_band_spared(self):
+        """Non-text structural content in the band is never reclassified."""
+        els = [_make_tagged("", PDFTag.FIGURE, page=1, y=40, eid="e1")]
+        detect_artifacts(els, page_heights=self.PH)
+        assert els[0].pdf_tag == PDFTag.FIGURE
+
+    def test_skipped_without_page_heights(self):
+        """Margin pass is inert when page heights are unavailable (no regression)."""
+        els = [_make_tagged("16", PDFTag.P, page=2, y=40, eid="e1")]
+        detect_artifacts(els)  # no page_heights
+        assert els[0].pdf_tag == PDFTag.P
+
+
 class TestCaptionDetector:
     """Tests for caption detection."""
 

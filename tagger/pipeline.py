@@ -594,8 +594,17 @@ class AutoTaggerPipeline:
         # 8b: TOC detection
         detect_toc_entries(all_tagged, doc_data.num_pages)
 
-        # 8c: Artifact detection (running headers/footers)
-        detect_artifacts(all_tagged, doc_data.num_pages)
+        # 8c: Artifact detection (running headers/footers/page numbers).
+        # Pass standard-DPI page heights so the margin-band pass can locate the
+        # top/bottom margins (page_height_pt is 72-DPI; bbox space is 150-DPI).
+        from tagger.config import PDF_NATIVE_DPI, STANDARD_DPI
+        scale = STANDARD_DPI / PDF_NATIVE_DPI
+        page_heights = {
+            pn: pd.classification.page_height_pt * scale
+            for pn, pd in doc_data.pages.items()
+            if pd.classification is not None
+        }
+        detect_artifacts(all_tagged, doc_data.num_pages, page_heights)
 
         # 8d: Caption detection
         detect_captions(all_tagged)
