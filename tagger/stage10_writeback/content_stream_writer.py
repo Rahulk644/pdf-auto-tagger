@@ -53,26 +53,36 @@ def _text_len(instruction, op: str) -> int:
     return len(str(instruction.operands[0]))
 
 
-def _rewrite_stream(instructions, char_to_mcid, mcid_to_tag, do_subtype):
+def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype):
     """Run the marked-content state machine over a parsed content stream.
 
     Guarantees that every mark-producing operator ends up inside either a tagged
-    BDC (text mapped to an MCID) or an /Artifact BMC sequence, with every
-    sequence wholly contained within one text object and — for artifacts — one
-    graphics-state level (proper nesting).
+    BDC (text belonging to a struct element) or an /Artifact BMC sequence, with
+    every sequence wholly contained within one text object and — for artifacts —
+    one graphics-state level (proper nesting).
 
-    char_to_mcid / mcid_to_tag describe page text tagging; pass empty dicts for
-    form streams (everything becomes an artifact). ``do_subtype`` maps an XObject
-    resource name to its /Subtype string so /Form invocations can be passed
-    through (their inner marks are wrapped by the form pass) while /Image
-    invocations are artifact-wrapped here.
+    This function is the single MCID authority: it allocates a fresh PAGE-LOCAL
+    MCID (0,1,2,… reset per stream) every time it opens a tagged run, so a
+    struct element whose glyphs are split across the stream collects several
+    distinct MCIDs. ``char_to_key`` maps an absolute Stage-1 char index to a
+    struct-element key (element_id, or cell_id for table cells); ``key_to_tag``
+    maps that key to its PDF tag. Pass empty dicts for form streams (everything
+    becomes an artifact, no MCIDs allocated). ``do_subtype`` maps an XObject
+    resource name to its /Subtype so /Form invocations pass through (their inner
+    marks are wrapped by the form pass) while /Image invocations are wrapped.
 
-    Returns (new_instructions, injected_mcids).
+    Returns (new_instructions, element_to_mcids, mcid_to_element, mcid_to_tag):
+      element_to_mcids: {key -> [mcid, …]} in content order (for struct /K)
+      mcid_to_element:  {mcid -> key}      (for the MCID-indexed ParentTree)
+      mcid_to_tag:      {mcid -> tag}
     """
     new_cs = []
-    injected = set()
+    element_to_mcids: dict = {}
+    mcid_to_element: dict = {}
+    mcid_to_tag: dict = {}
+    next_mcid = 0
     current_char_idx = 0
-    active = None  # None | ("tag", mcid) | ("art",)
+    active = None  # None | ("tag", key) | ("art",)
 
     def close():
         nonlocal active
@@ -80,11 +90,16 @@ def _rewrite_stream(instructions, char_to_mcid, mcid_to_tag, do_subtype):
             new_cs.append(_emc())
             active = None
 
-    def open_tag(mcid):
-        nonlocal active
-        injected.add(mcid)
-        new_cs.append(_tag_bdc(mcid, mcid_to_tag[mcid]))
-        active = ("tag", mcid)
+    def open_tag(key):
+        nonlocal active, next_mcid
+        mcid = next_mcid
+        next_mcid += 1
+        tag = key_to_tag[key]
+        new_cs.append(_tag_bdc(mcid, tag))
+        element_to_mcids.setdefault(key, []).append(mcid)
+        mcid_to_element[mcid] = key
+        mcid_to_tag[mcid] = tag
+        active = ("tag", key)
 
     def open_art():
         nonlocal active
@@ -118,8 +133,8 @@ def _rewrite_stream(instructions, char_to_mcid, mcid_to_tag, do_subtype):
             op_len = _text_len(ins, op)
             target = None
             for i in range(current_char_idx, current_char_idx + op_len):
-                if i in char_to_mcid:
-                    target = char_to_mcid[i]
+                if i in char_to_key:
+                    target = char_to_key[i]
                     break
             if target is not None:
                 if active != ("tag", target):
@@ -152,7 +167,7 @@ def _rewrite_stream(instructions, char_to_mcid, mcid_to_tag, do_subtype):
         new_cs.append(ins)
 
     close()
-    return new_cs, injected
+    return new_cs, element_to_mcids, mcid_to_element, mcid_to_tag
 
 
 def _xobject_subtype_resolver(obj):
@@ -178,20 +193,40 @@ def inject_bdc_markers(
     page: pikepdf.Page,
     page_num: int,
     tagged_elements: list,
-    element_mcid_map: dict[str, int],
-) -> set[int]:
+) -> tuple[dict, dict, dict]:
     """
     Inject BDC/EMC around tagged text and /Artifact BMC/EMC around every other
     mark-producing operator in the page content stream, so that no content item
     is left outside marked content (PDF/UA-1 clause 7.1-3).
 
-    Returns the set of MCIDs that were successfully injected.
+    Allocates PAGE-LOCAL MCIDs (0,1,2,… per page) — this is the single source of
+    truth for MCID numbering. The struct tree is then built from the returned
+    maps so the page's ParentTree array can be indexed by MCID.
+
+    Returns (element_to_mcids, mcid_to_element, mcid_to_tag) for the page.
     """
-    # 1. Map absolute character indices to MCIDs based on TaggedElement merged_from
-    char_to_mcid = {}
-    mcid_to_tag = {}
+    # 1. Map absolute Stage-1 char indices to struct-element keys (element_id,
+    #    or cell_id for table cells) and remember each key's PDF tag.
+    char_to_key: dict[int, str] = {}
+    key_to_tag: dict[str, str] = {}
+
+    def _map_chars(merged_from, key):
+        for source_id in merged_from:
+            if source_id.startswith(f"p{page_num}_c"):
+                try:
+                    char_to_key[int(source_id.split("_c")[1])] = key
+                except ValueError:
+                    pass
+
     for el in tagged_elements:
         if el.page_num != page_num:
+            continue
+
+        if el.pdf_tag.value == "Artifact":
+            # Artifacts must NOT receive an MCID — their glyphs fall through to a
+            # plain /Artifact BMC in the state machine. Giving them an MCID would
+            # emit "/Artifact <</MCID>> BDC" (artifact tagged as real content),
+            # which fails PDF/UA clause 7.1-1/7.1-2.
             continue
 
         if el.pdf_tag.value == "Table" and el.specialist_data.get("cells"):
@@ -199,52 +234,28 @@ def inject_bdc_markers(
                 if not cell.get("merged_from"):
                     continue
                 cell_id = f"{el.element_id}_cell_{cell['row_idx']}_{cell['col_idx']}"
-                if cell_id not in element_mcid_map:
-                    continue
-
-                mcid = element_mcid_map[cell_id]
-                td_tag = "TH" if cell.get("is_header") or cell.get("is_row_header") else "TD"
-                mcid_to_tag[mcid] = td_tag
-
-                for source_id in cell["merged_from"]:
-                    if source_id.startswith(f"p{page_num}_c"):
-                        try:
-                            char_idx = int(source_id.split("_c")[1])
-                            char_to_mcid[char_idx] = mcid
-                        except ValueError:
-                            pass
+                key_to_tag[cell_id] = (
+                    "TH" if cell.get("is_header") or cell.get("is_row_header") else "TD"
+                )
+                _map_chars(cell["merged_from"], cell_id)
         else:
-            if el.element_id not in element_mcid_map:
-                continue
-
-            mcid = element_mcid_map[el.element_id]
-            mcid_to_tag[mcid] = el.pdf_tag.value
-
-            for source_id in el.merged_from:
-                # Source IDs are like "p1_c5"
-                if source_id.startswith(f"p{page_num}_c"):
-                    try:
-                        char_idx = int(source_id.split("_c")[1])
-                        char_to_mcid[char_idx] = mcid
-                    except ValueError:
-                        pass
-
-    logger.debug(
-        "Page %d: char_to_mcid size=%d, unique MCIDs=%s",
-        page_num, len(char_to_mcid), set(char_to_mcid.values()),
-    )
+            key_to_tag[el.element_id] = el.pdf_tag.value
+            _map_chars(el.merged_from, el.element_id)
 
     # 2. Parse and rewrite the content stream. Even with no tagged text we still
     #    run the state machine so bare graphics get artifact-wrapped.
     cs = pikepdf.parse_content_stream(page)
-    new_cs, injected_mcids = _rewrite_stream(
-        cs, char_to_mcid, mcid_to_tag, _xobject_subtype_resolver(page.obj)
+    new_cs, element_to_mcids, mcid_to_element, mcid_to_tag = _rewrite_stream(
+        cs, char_to_key, key_to_tag, _xobject_subtype_resolver(page.obj)
     )
 
     # 3. Write back the new content stream
     page.Contents = pdf.make_stream(pikepdf.unparse_content_stream(new_cs))
-    logger.debug(f"Page {page_num}: Injected BDC markers for {len(injected_mcids)} MCIDs.")
-    return injected_mcids
+    logger.debug(
+        "Page %d: allocated %d page-local MCIDs across %d elements.",
+        page_num, len(mcid_to_element), len(element_to_mcids),
+    )
+    return element_to_mcids, mcid_to_element, mcid_to_tag
 
 
 def artifact_wrap_forms(pdf: pikepdf.Pdf) -> int:
@@ -271,7 +282,7 @@ def artifact_wrap_forms(pdf: pikepdf.Pdf) -> int:
         except Exception:
             return
         resolve = _xobject_subtype_resolver(form_obj)
-        new_cs, _ = _rewrite_stream(cs, {}, {}, resolve)
+        new_cs, *_ = _rewrite_stream(cs, {}, {}, resolve)
         form_obj.write(pikepdf.unparse_content_stream(new_cs))
 
         # Recurse into nested forms.

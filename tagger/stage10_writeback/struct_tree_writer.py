@@ -92,6 +92,19 @@ def retag_existing_pdf(
     return stats
 
 
+def _mcid_k(mcids: list[int]):
+    """Build a struct element's /K value from its page-local MCIDs.
+
+    One MCID -> the integer itself; several (split content) -> an Array of
+    integers, all referring to marked content on the element's /Pg.
+    """
+    if not mcids:
+        return None
+    if len(mcids) == 1:
+        return mcids[0]
+    return Array(list(mcids))
+
+
 def tag_untagged_pdf(
     input_path: str | Path,
     output_path: str | Path,
@@ -120,21 +133,8 @@ def tag_untagged_pdf(
         pdf = pikepdf.open(str(input_path))
         root = pdf.Root
 
-        # 0. Build single source of truth for MCIDs
-        element_mcid_map = {}
-        mcid_counter = 0
-        for el in tagged_elements:
-            if el.pdf_tag != PDFTag.ARTIFACT:
-                if el.pdf_tag == PDFTag.TABLE and el.specialist_data.get("cells"):
-                    # Give each non-empty cell an MCID
-                    for cell in el.specialist_data["cells"]:
-                        if cell.get("merged_from"):
-                            cell_id = f"{el.element_id}_cell_{cell['row_idx']}_{cell['col_idx']}"
-                            element_mcid_map[cell_id] = mcid_counter
-                            mcid_counter += 1
-                else:
-                    element_mcid_map[el.element_id] = mcid_counter
-                    mcid_counter += 1
+        # MCIDs are assigned page-locally by inject_bdc_markers (the single MCID
+        # authority); the struct tree below is built from the maps it returns.
 
         # 1. Set MarkInfo
         root["/MarkInfo"] = pdf.make_indirect(
@@ -161,7 +161,6 @@ def tag_untagged_pdf(
 
         # 4. Build struct elements for each page
         parent_map_entries: list[tuple[int, Array]] = []
-        mcid_counter = 0
 
         for page_num in sorted(by_page.keys()):
             page_elements = by_page[page_num]
@@ -175,10 +174,15 @@ def tag_untagged_pdf(
             # Sort elements by reading order
             page_elements.sort(key=lambda e: (e.bbox[1], e.bbox[0]))
 
-            # 4.1 Inject BDC markers into the content stream
-            injected_mcids = inject_bdc_markers(pdf, page, page_num, page_elements, element_mcid_map)
+            # 4.1 Inject BDC markers — this allocates the page-local MCIDs.
+            element_to_mcids, mcid_to_element, _mcid_tag = inject_bdc_markers(
+                pdf, page, page_num, page_elements
+            )
 
-            page_struct_parents = Array([])
+            # MCID -> the struct element that owns that marked content. The
+            # page's ParentTree array is built from this at the end of the page
+            # so it is indexed by MCID (correct by construction).
+            mcid_to_structelem: dict[int, object] = {}
 
             # Track consecutive LI elements for grouping into L
             i = 0
@@ -202,15 +206,17 @@ def tag_untagged_pdf(
                     # Create L (list) container
                     li_struct_elems = Array([])
                     for li_el in li_run:
-                        li_mcid = element_mcid_map.get(li_el.element_id)
-                        if li_mcid is None or li_mcid not in injected_mcids:
+                        li_mcids = element_to_mcids.get(li_el.element_id, [])
+                        if not li_mcids:
                             continue
-                        li_struct = _build_list_item_struct(
+                        li_struct, lbody = _build_list_item_struct(
                             pdf, li_el, doc_elem, page.obj,
-                            li_mcid,
+                            li_mcids,
                         )
                         li_struct_elems.append(li_struct)
-                        page_struct_parents.append(li_struct)
+                        # The list item's marked content lives under LBody.
+                        for m in li_mcids:
+                            mcid_to_structelem[m] = lbody
                         stats["total_elements_written"] += 1
 
                     if li_struct_elems:
@@ -235,7 +241,8 @@ def tag_untagged_pdf(
                         "/K": Array([]),
                     }))
                     doc_elem["/K"].append(table_struct_elem)
-                    page_struct_parents.append(table_struct_elem)
+                    # Table/TR own no marked content, so they are not entered in
+                    # the MCID-indexed ParentTree array — only their TH/TD cells.
 
                     # Group cells by row
                     rows = {}
@@ -250,15 +257,14 @@ def tag_untagged_pdf(
                             "/K": Array([]),
                         }))
                         table_struct_elem["/K"].append(tr_elem)
-                        page_struct_parents.append(tr_elem)
 
                         for cell in sorted(rows[row_idx], key=lambda c: c["col_idx"]):
                             cell_id = f"{el.element_id}_cell_{cell['row_idx']}_{cell['col_idx']}"
-                            cell_mcid = element_mcid_map.get(cell_id)
-                            
+                            cell_mcids = element_to_mcids.get(cell_id, [])
+
                             is_empty = not cell.get("merged_from")
-                            if not is_empty and (cell_mcid is None or cell_mcid not in injected_mcids):
-                                continue # Skip mapping non-empty cells that failed BDC injection
+                            if not is_empty and not cell_mcids:
+                                continue # Skip non-empty cells that failed BDC injection
 
                             # Dynamically determine row header status based on text content
                             cell_text = cell.get("text", "")
@@ -287,7 +293,7 @@ def tag_untagged_pdf(
                             }
                             
                             if not is_empty:
-                                td_elem_dict["/K"] = cell_mcid
+                                td_elem_dict["/K"] = _mcid_k(cell_mcids)
                                 td_elem_dict["/Pg"] = page.obj
 
                             if td_tag == "TH":
@@ -301,7 +307,8 @@ def tag_untagged_pdf(
 
                             td_elem = pdf.make_indirect(Dictionary(td_elem_dict))
                             tr_elem["/K"].append(td_elem)
-                            page_struct_parents.append(td_elem)
+                            for m in cell_mcids:
+                                mcid_to_structelem[m] = td_elem
                             stats["total_elements_written"] += 1
 
                     stats["total_elements_written"] += 1
@@ -309,8 +316,8 @@ def tag_untagged_pdf(
                     continue
 
                 # Regular element
-                mcid = element_mcid_map.get(el.element_id)
-                if mcid is None or mcid not in injected_mcids:
+                mcids = element_to_mcids.get(el.element_id, [])
+                if not mcids:
                     i += 1
                     continue
 
@@ -322,7 +329,7 @@ def tag_untagged_pdf(
                     "/Type": Name.StructElem,
                     "/S": Name(f"/{tag_name}"),
                     "/P": doc_elem,
-                    "/K": mcid,
+                    "/K": _mcid_k(mcids),
                     "/Pg": page.obj,
                 }
 
@@ -335,10 +342,26 @@ def tag_untagged_pdf(
                 struct_elem = pdf.make_indirect(Dictionary(struct_elem_dict))
 
                 doc_elem["/K"].append(struct_elem)
-                page_struct_parents.append(struct_elem)
+                for m in mcids:
+                    mcid_to_structelem[m] = struct_elem
 
                 stats["total_elements_written"] += 1
                 i += 1
+
+            # Build the page's ParentTree array INDEXED BY MCID: position k holds
+            # the struct element that owns page-local MCID k. Every allocated
+            # MCID maps to an element that produced a struct element above, so
+            # the range 0..n-1 is fully covered.
+            n_mcids = len(mcid_to_element)
+            missing = [k for k in range(n_mcids) if k not in mcid_to_structelem]
+            if missing:
+                logger.warning(
+                    "Page %d: %d MCIDs without a struct element (%s); using OBJR-free gap.",
+                    page_num, len(missing), missing[:10],
+                )
+            page_struct_parents = Array(
+                [mcid_to_structelem.get(k, doc_elem) for k in range(n_mcids)]
+            )
 
             # Set page's StructParents
             page.obj["/StructParents"] = len(parent_map_entries)
@@ -398,12 +421,14 @@ def _build_list_item_struct(
     el: TaggedElement,
     parent,
     page_obj,
-    mcid: int,
+    mcids: list[int],
 ):
     """
     Build a StructElem for a list item with Lbl + LBody children.
 
-    PDF/UA structure: LI > [ Lbl, LBody ]
+    PDF/UA structure: LI > [ Lbl, LBody ]. The list item's marked content is
+    referenced from LBody (/K = its page-local MCIDs). Returns (li_elem, lbody)
+    so the caller can index the ParentTree array by those MCIDs to LBody.
     """
     label = el.specialist_data.get("list_label", "") if hasattr(el, "specialist_data") and el.specialist_data else ""
     body = el.specialist_data.get("list_body", el.text) if hasattr(el, "specialist_data") and el.specialist_data else el.text
@@ -421,6 +446,8 @@ def _build_list_item_struct(
     lbody = pdf.make_indirect(Dictionary({
         "/Type": Name.StructElem,
         "/S": Name("/LBody"),
+        "/K": _mcid_k(mcids),
+        "/Pg": page_obj,
         "/ActualText": String(body or ""),
     }))
     children.append(lbody)
@@ -434,7 +461,12 @@ def _build_list_item_struct(
         "/ActualText": String(el.text or ""),
     }))
 
-    return li_elem
+    # Parent links for the children.
+    lbody["/P"] = li_elem
+    if label:
+        children[0]["/P"] = li_elem
+
+    return li_elem, lbody
 
 
 def _walk_and_retag(
