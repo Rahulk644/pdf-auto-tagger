@@ -142,10 +142,7 @@ def extract_table_native(
                 )
                 return None
 
-            has_header = all(
-                cell is not None and str(cell).strip()
-                for cell in rows[0]
-            ) if rows else False
+            has_header = _is_header_row(rows[0]) if rows else False
 
             cells_data = []
             for row_idx, row in enumerate(table.rows):
@@ -212,6 +209,26 @@ def extract_table_native(
             page_num, e,
         )
         return None
+
+
+def _is_header_row(first_row) -> bool:
+    """Whether a table's first row should be tagged as a header row (TH).
+
+    The old rule required EVERY first-row cell to be non-empty, but financial and
+    data tables almost always have an empty stub-head (the top-left corner above
+    the row-label column), so the whole header row was written as TD — the layout
+    harness measured TH recall at ~1%. Relaxed rule: a header has >=2 non-empty
+    cells and every cell except the stub-head corner (col 0) is filled. This keeps
+    numeric column headers (e.g. year labels "2017"/"2016") working, unlike a
+    "mostly non-numeric" rule.
+    """
+    cells = list(first_row or [])
+    if len(cells) < 2:
+        return False
+    nonempty = [c for c in cells if c is not None and str(c).strip()]
+    if len(nonempty) < 2:
+        return False
+    return all(c is not None and str(c).strip() for c in cells[1:])
 
 
 def _is_numeric_content(text: str) -> bool:
