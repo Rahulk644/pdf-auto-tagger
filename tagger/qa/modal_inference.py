@@ -43,9 +43,10 @@ app = modal.App("qa-gemma4-inference")
     image=image,
     gpu="H100",
     volumes={"/weights": vol},
-    timeout=600,
-    scaledown_window=300,
-    max_containers=9,
+    timeout=1800,
+    scaledown_window=600,
+    min_containers=0,
+    max_containers=6,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
 class GemmaInference:

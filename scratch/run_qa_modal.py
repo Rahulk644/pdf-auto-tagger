@@ -3,12 +3,11 @@ QA runner: all extraction/rendering runs locally, only Gemma inference goes to M
 
 For each PDF:
   1. Locally: pdfplumber extraction, struct tree parsing, fitz page rendering
-  2. For each page chunk: calls GemmaInference.generate.remote() on Modal
-  3. Saves QA report JSON
+  2. All chunks across all pages are spawned in parallel to Modal
+  3. Results collected and aggregated per page
+  4. Saves QA report JSON
 """
 import json
-import random
-import time
 import sys
 import io
 import base64
@@ -214,6 +213,39 @@ def _inject_dynamic_rules(elements_list):
     return "\n\n".join(list(active_rules)) if active_rules else "No special complex structure rules apply."
 
 
+def _parse_response(response_text, chunk, filename, page_num, chunk_idx, n_chunks):
+    try:
+        raw = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
+        fence = re.search(r'```json\s*(.*?)\s*```', raw, flags=re.DOTALL)
+        if fence:
+            raw = fence.group(1)
+        else:
+            of = re.search(r'```json\s*', raw)
+            if of:
+                raw = raw[of.end():]
+        s = raw.find('[')
+        e_idx = raw.rfind(']')
+        if s == -1:
+            raise ValueError("No JSON array in response")
+        if e_idx == -1 or e_idx < s:
+            partial = raw[s:]
+            last = partial.rfind('},')
+            if last == -1:
+                last = partial.rfind('}')
+            if last != -1:
+                raw = partial[:last + 1] + ']'
+            else:
+                raise ValueError("Truncated with no recoverable objects")
+        else:
+            raw = raw[s:e_idx + 1]
+        chunk_data = json.loads(raw)
+        print(f"[{filename} | Page {page_num} | Chunk {chunk_idx+1}/{n_chunks}] Parsed {len(chunk_data)}/{len(chunk)}", flush=True)
+        return chunk_data
+    except Exception as ex:
+        print(f"[{filename} | Page {page_num} | Chunk {chunk_idx+1}] Parse error: {ex}", flush=True)
+        return []
+
+
 # ── Main audit function (runs locally) ───────────────────────────────────────
 
 def audit_pdf(pdf_bytes: bytes, filename: str) -> dict:
@@ -226,11 +258,10 @@ def audit_pdf(pdf_bytes: bytes, filename: str) -> dict:
 
     fitz_doc = fitz.open(stream=io.BytesIO(pdf_bytes), filetype="pdf")
     total_pages = len(fitz_doc)
-    print(f"[{filename}] {total_pages} pages, starting audit...", flush=True)
 
-    all_page_results = []
-    total_elements = 0
-    total_correct = 0
+    # ── Build all chunks across all pages ─────────────────────────────────────
+    page_elements = {}   # page_num -> elements_list
+    spawn_items = []     # (page_num, chunk_idx, n_chunks, chunk, img_b64, prompt)
 
     for page_num in range(1, total_pages + 1):
         page_idx = page_num - 1
@@ -251,6 +282,7 @@ def audit_pdf(pdf_bytes: bytes, filename: str) -> dict:
             else:
                 el['current_tag'] = el.get('tag', 'Unknown')
 
+        page_elements[page_num] = elements_list
         injected_rules = _inject_dynamic_rules(elements_list)
 
         fitz_page = fitz_doc[page_idx]
@@ -274,16 +306,13 @@ def audit_pdf(pdf_bytes: bytes, filename: str) -> dict:
             else [clean_elements[i:i + CHUNK_SIZE] for i in range(0, len(clean_elements), CHUNK_SIZE)]
         )
 
-        all_json_data = []
+        rules_text = (
+            f"Apply these PDF/UA and WCAG rules:\n\n{injected_rules}"
+            if injected_rules and injected_rules.strip() != "No special complex structure rules apply."
+            else ""
+        )
 
         for chunk_idx, chunk in enumerate(chunks):
-            time.sleep(random.uniform(0, 3) + (chunk_idx * 0.5))
-
-            rules_text = (
-                f"Apply these PDF/UA and WCAG rules:\n\n{injected_rules}"
-                if injected_rules and injected_rules.strip() != "No special complex structure rules apply."
-                else ""
-            )
             prompt = f"""You are a PDF accessibility expert enforcing PDF/UA and WCAG 2.2 standards.
 
 {rules_text}
@@ -314,50 +343,45 @@ Schema:
     "corrective_reasoning": "brief explanation"
   }}
 ]"""
+            spawn_items.append((page_num, chunk_idx, len(chunks), chunk, img_b64, prompt))
 
-            response_text = None
-            for attempt in range(12):
-                try:
-                    response_text = _GemmaInference().generate.remote(img_b64, prompt)
-                    break
-                except Exception as e:
-                    print(f"[{filename} | Page {page_num} | Chunk {chunk_idx+1}] Error attempt {attempt+1}: {e}", flush=True)
-                    if attempt < 11:
-                        time.sleep(random.uniform(2, min(45, 4 * (1.5 ** attempt))))
+    total_chunks = len(spawn_items)
+    print(f"[{filename}] {total_pages} pages, {total_chunks} chunks — spawning all in parallel...", flush=True)
 
-            if response_text is None:
-                print(f"[{filename} | Page {page_num} | Chunk {chunk_idx+1}] All retries failed, skipping", flush=True)
-                continue
+    # ── Spawn all chunks simultaneously ───────────────────────────────────────
+    spawned = []
+    for page_num, chunk_idx, n_chunks, chunk, img_b64, prompt in spawn_items:
+        handle = _GemmaInference().generate.spawn(img_b64, prompt)
+        spawned.append((page_num, chunk_idx, n_chunks, chunk, img_b64, prompt, handle))
+    print(f"[{filename}] All {total_chunks} chunks spawned.", flush=True)
 
+    # ── Collect results (in spawn order) ──────────────────────────────────────
+    results_by_page = {pn: [] for pn in range(1, total_pages + 1)}
+
+    for page_num, chunk_idx, n_chunks, chunk, img_b64, prompt, handle in spawned:
+        response_text = None
+        try:
+            response_text = handle.get(timeout=1800)
+        except Exception as e:
+            print(f"[{filename} | Page {page_num} | Chunk {chunk_idx+1}] Error: {e} — retrying...", flush=True)
             try:
-                raw = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
-                fence = re.search(r'```json\s*(.*?)\s*```', raw, flags=re.DOTALL)
-                if fence:
-                    raw = fence.group(1)
-                else:
-                    of = re.search(r'```json\s*', raw)
-                    if of:
-                        raw = raw[of.end():]
-                s = raw.find('[')
-                e_idx = raw.rfind(']')
-                if s == -1:
-                    raise ValueError("No JSON array in response")
-                if e_idx == -1 or e_idx < s:
-                    partial = raw[s:]
-                    last = partial.rfind('},')
-                    if last == -1:
-                        last = partial.rfind('}')
-                    if last != -1:
-                        raw = partial[:last + 1] + ']'
-                    else:
-                        raise ValueError("Truncated with no recoverable objects")
-                else:
-                    raw = raw[s:e_idx + 1]
-                chunk_data = json.loads(raw)
-                print(f"[{filename} | Page {page_num} | Chunk {chunk_idx+1}/{len(chunks)}] Parsed {len(chunk_data)}/{len(chunk)}", flush=True)
-                all_json_data.extend(chunk_data)
-            except Exception as ex:
-                print(f"[{filename} | Page {page_num} | Chunk {chunk_idx+1}] Parse error: {ex}", flush=True)
+                response_text = _GemmaInference().generate.spawn(img_b64, prompt).get(timeout=1800)
+            except Exception as e2:
+                print(f"[{filename} | Page {page_num} | Chunk {chunk_idx+1}] Final failure: {e2}", flush=True)
+
+        if response_text:
+            results_by_page[page_num].extend(
+                _parse_response(response_text, chunk, filename, page_num, chunk_idx, n_chunks)
+            )
+
+    # ── Aggregate per-page stats ───────────────────────────────────────────────
+    all_page_results = []
+    total_elements = 0
+    total_correct = 0
+
+    for page_num in range(1, total_pages + 1):
+        elements_list = page_elements[page_num]
+        all_json_data = results_by_page[page_num]
 
         for item in all_json_data:
             if not isinstance(item, dict):
