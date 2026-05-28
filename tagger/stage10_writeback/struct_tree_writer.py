@@ -132,6 +132,29 @@ def _append_k_child(elem, child) -> None:
         elem["/K"] = Array([k, child])
 
 
+def _link_alt_text(a, owner) -> str:
+    """Best alternate description for a Link annotation (clause 7.18.5-2 / 7.18.1-2).
+
+    Prefer the visible text of the block the link sits in (owner /ActualText),
+    fall back to the link's URI, then a generic label. Capped so a whole-paragraph
+    owner does not yield an unwieldy description.
+    """
+    if isinstance(owner, Dictionary):
+        at = owner.get("/ActualText")
+        if at is not None:
+            s = str(at).strip()
+            if s:
+                return s[:300]
+    action = a.get("/A")
+    if isinstance(action, Dictionary):
+        uri = action.get("/URI")
+        if uri is not None:
+            s = str(uri).strip()
+            if s:
+                return s
+    return "Link"
+
+
 def _tag_link_annotations(
     pdf,
     page,
@@ -182,6 +205,11 @@ def _tag_link_annotations(
             })]),
         }))
         _append_k_child(owner, link_elem)
+
+        # Alternate description (clause 7.18.5-2 / 7.18.1-2): the OBJR-only Link
+        # fix added structure but not the Contents the clause also requires.
+        if a.get("/Contents") is None:
+            a["/Contents"] = String(_link_alt_text(a, owner))
 
         a["/StructParent"] = next_sp
         parent_map_entries.append((next_sp, link_elem))
