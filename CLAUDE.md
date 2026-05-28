@@ -92,6 +92,17 @@ Results saved to `/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal/` as 
 
 **Corpus:** Five test PDFs. Tagged outputs land in `output_modal/`.
 
+### Benchmark evaluation (`tagger/benchmark/` + `scratch/run_benchmark.py`)
+
+The third eval axis (alongside veraPDF = ISO conformance and Gemma QA = noisy tag quality): scores tagged output against the **PDF-Accessibility-Benchmark** (125 scholarly PDFs, expert WCAG/PDF-UA labels per criterion). CPU/deterministic — one bounded Modal regen only for the strip+V2 remediation pass.
+
+- `struct_utils.py` — shared struct-tree readers; identifies elements by `/S` presence (NOT the optional `/Type /StructElem`) and resolves `/RoleMap`. The `scratch/layout_*` harness tools import from here.
+- `verdicts/` — `base.py` (`Verdict` + `CannotDeriveReason` + `derive_verdict` dispatch) + one module per criterion (verdicts derive from the **expert discriminator**, not veraPDF conformance — they can diverge).
+- `loader.py` → `harness.py` (checker vs remediation framing; the hard-assert keeps a `failed` label as an input selector, never an agreement target) → `report.py` (scorecard).
+- Run: `PYTHONPATH=. python scratch/run_benchmark.py <benchmark_root> [--remediation-dir DIR]`.
+
+Three axes are correlated but distinct — a doc can be WCAG-accessible yet veraPDF-non-conformant. Don't conflate them.
+
 ### Configuration (`tagger/config.py`)
 
 All magic numbers are in frozen dataclasses exported as singletons (`PAGE_CLASSIFIER`, `TEXT_MERGER`, `LAYOUT`, `TABLE`, `VALIDATOR`, `SEMANTIC`, `WRITEBACK`, `PIPELINE`). Stage code imports from `tagger.config` — never hardcode thresholds.
