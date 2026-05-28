@@ -191,6 +191,113 @@ def _tag_link_annotations(
     return next_sp
 
 
+def _struct_kids(node) -> list:
+    k = node.get("/K")
+    if isinstance(k, Array):
+        return list(k)
+    if k is not None:
+        return [k]
+    return []
+
+
+def _normalize_table_columns(pdf, root) -> int:
+    """Make every TR in each Table span the same number of columns (clause 7.2-42/43).
+
+    veraPDF counts effective columns (sum of col spans). Drop Col/RowSpan so
+    effective columns equal cell count, wrap any non-cell child that leaked into a
+    TR in its own TD, then pad short rows with empty TD cells to the table max.
+    Struct-only (empty TDs carry no marked content) -> rendering-neutral. Returns
+    the number of empty TD cells added.
+    """
+    padded = 0
+
+    def visit(node):
+        nonlocal padded
+        if not isinstance(node, Dictionary):
+            return
+        if str(node.get("/S")) == "/Table":
+            trs = [c for c in _struct_kids(node)
+                   if isinstance(c, Dictionary) and str(c.get("/S")) == "/TR"]
+            for tr in trs:
+                for c in _struct_kids(tr):
+                    if not isinstance(c, Dictionary):
+                        continue
+                    a = c.get("/A")
+                    for ad in (a if isinstance(a, Array) else [a]):
+                        if isinstance(ad, Dictionary):
+                            for span in ("/ColSpan", "/RowSpan"):
+                                if ad.get(span) is not None:
+                                    del ad[span]
+                    for span in ("/ColSpan", "/RowSpan"):
+                        if c.get(span) is not None:
+                            del c[span]
+            for tr in trs:
+                tk = tr.get("/K")
+                if not isinstance(tk, Array):
+                    tr["/K"] = tk = Array([tk]) if tk is not None else Array([])
+                for idx, child in enumerate(list(tk)):
+                    if isinstance(child, Dictionary) and str(child.get("/S")) not in ("/TD", "/TH"):
+                        td = pdf.make_indirect(Dictionary({
+                            "/Type": Name.StructElem, "/S": Name("/TD"),
+                            "/P": tr, "/K": Array([child]),
+                        }))
+                        child["/P"] = td
+                        tk[idx] = td
+            counts = [sum(1 for c in _struct_kids(tr)
+                          if isinstance(c, Dictionary) and str(c.get("/S")) in ("/TD", "/TH"))
+                      for tr in trs]
+            maxc = max(counts) if counts else 0
+            for tr, n in zip(trs, counts):
+                if n < maxc:
+                    k = tr.get("/K")
+                    if not isinstance(k, Array):
+                        tr["/K"] = k = Array([k]) if k is not None else Array([])
+                    for _ in range(maxc - n):
+                        k.append(pdf.make_indirect(Dictionary({
+                            "/Type": Name.StructElem, "/S": Name("/TD"), "/P": tr,
+                        })))
+                        padded += 1
+        for c in _struct_kids(node):
+            visit(c)
+
+    visit(root)
+    return padded
+
+
+def _normalize_heading_levels(root) -> int:
+    """Renumber Hn by nesting depth so the sequence never skips a level (clause 7.4.2-1).
+
+    Walks headings in document order; a stack of ancestor nominal levels yields a
+    depth-based level that starts at H1 and never skips. No-op when already
+    compliant. Struct-only (/S rewrite) -> rendering-neutral. Returns count changed.
+    """
+    headings = []
+
+    def visit(node):
+        if not isinstance(node, Dictionary):
+            return
+        s = str(node.get("/S")) if node.get("/S") is not None else ""
+        if len(s) == 3 and s.startswith("/H") and s[2].isdigit():
+            headings.append(node)
+        for c in _struct_kids(node):
+            visit(c)
+
+    visit(root)
+
+    changed = 0
+    stack = []
+    for h in headings:
+        L = int(str(h.get("/S"))[2])
+        while stack and stack[-1] >= L:
+            stack.pop()
+        stack.append(L)
+        new = len(stack)
+        if new != L:
+            h["/S"] = Name(f"/H{new}")
+            changed += 1
+    return changed
+
+
 def tag_untagged_pdf(
     input_path: str | Path,
     output_path: str | Path,
@@ -220,6 +327,8 @@ def tag_untagged_pdf(
         "cidsets_removed": 0,
         "notdef_stripped": 0,
         "space_refs_stripped": 0,
+        "table_cells_padded": 0,
+        "headings_renumbered": 0,
     }
 
     try:
@@ -566,6 +675,10 @@ def tag_untagged_pdf(
 
         # 11. Strip space refs to glyph-deficient simple fonts (missing space glyph).
         stats["space_refs_stripped"] = strip_missing_space_refs(pdf)
+
+        # 12. Normalize struct tree: uniform table columns + non-skipping headings.
+        stats["table_cells_padded"] = _normalize_table_columns(pdf, doc_elem)
+        stats["headings_renumbered"] = _normalize_heading_levels(doc_elem)
 
         # Save
         pdf.save(str(output_path))
