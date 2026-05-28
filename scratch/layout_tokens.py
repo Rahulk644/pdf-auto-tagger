@@ -20,82 +20,12 @@ from collections import Counter
 
 import pdfplumber
 import pikepdf
-from pikepdf import Array, Dictionary, Name
 
-ARTIFACT = "Artifact"
+# Struct-tree reading utilities promoted to the benchmark package (single source).
+# Run scratch tools with PYTHONPATH=. so `tagger` is importable.
+from tagger.benchmark.struct_utils import ARTIFACT, mcid_tag_map, role_resolver, strip_tag
 
-
-def role_resolver(sr):
-    """Resolve a raw /S tag through /RoleMap to its standard structure type.
-
-    Real PDFs use custom tag names (e.g. /HEAD_42, /Story, /StyleSpan) mapped to
-    standard types via the struct tree's /RoleMap; without resolution they look
-    unknown. Follows chains (custom -> custom -> standard), cycle-safe.
-    """
-    rm = sr.get("/RoleMap") if sr is not None else None
-    rm = rm if isinstance(rm, Dictionary) else None
-
-    def resolve(s):
-        if rm is None:
-            return s
-        seen = set()
-        while s in rm and s not in seen:
-            seen.add(s)
-            s = str(rm[s])
-        return s
-
-    return resolve
-
-
-def mcid_tag_map(pdf: pikepdf.Pdf) -> dict:
-    """{(page_index, page-local MCID): standard /S tag} from the struct tree.
-
-    Identifies struct elements by /S PRESENCE — the /Type /StructElem key is
-    OPTIONAL per ISO 32000 and absent in many real PDFs — and resolves each /S
-    through /RoleMap to its standard type.
-    """
-    sr = pdf.Root.get("/StructTreeRoot")
-    if sr is None:
-        return {}
-    resolve = role_resolver(sr)
-    page_index = {p.obj.objgen: i for i, p in enumerate(pdf.pages)}
-    out: dict = {}
-
-    def walk(node, pg_inherited):
-        if not isinstance(node, Dictionary) or node.get("/S") is None:
-            return
-        pg = node.get("/Pg", pg_inherited)
-        tag = resolve(str(node.get("/S")))
-        pidx = page_index.get(pg.objgen) if pg is not None else None
-
-        def scan(v):
-            if isinstance(v, int):
-                if pidx is not None:
-                    out[(pidx, int(v))] = tag
-            elif isinstance(v, Dictionary):
-                if v.get("/S") is not None:           # child struct elem (Type optional)
-                    walk(v, pg)
-                elif v.get("/Type") == Name.OBJR:
-                    return
-                elif v.get("/MCID") is not None and pidx is not None:  # MCR
-                    out[(pidx, int(v.get("/MCID")))] = tag
-            elif isinstance(v, Array):
-                for it in v:
-                    scan(it)
-
-        scan(node.get("/K"))
-
-    top = sr.get("/K")
-    for node in (top if isinstance(top, Array) else [top] if top is not None else []):
-        walk(node, None)
-    return out
-
-
-def strip_tag(tag: str | None) -> str:
-    """'/H1' -> 'H1'; None/unmapped -> 'Artifact'."""
-    if not tag:
-        return ARTIFACT
-    return tag[1:] if tag.startswith("/") else tag
+__all__ = ["ARTIFACT", "mcid_tag_map", "role_resolver", "strip_tag", "extract_tokens"]
 
 
 def extract_tokens(pdf_path: str) -> list[dict]:
