@@ -433,3 +433,88 @@ def strip_notdef_refs(pdf: pikepdf.Pdf) -> int:
     if removed:
         logger.debug("Stripped %d .notdef (CID 0) reference(s).", removed)
     return removed
+
+
+def _font_lacks_space(f) -> bool:
+    """True if a simple font's embedded program has no glyph for code 32 (space)."""
+    fd = f.get("/FontDescriptor")
+    if fd is None:
+        return False
+    prog = fd.get("/FontFile3") or fd.get("/FontFile2") or fd.get("/FontFile")
+    if prog is None:
+        return False
+    try:
+        import fitz
+        font = fitz.Font(fontbuffer=bytes(prog.read_bytes()))
+        return not font.has_glyph(32)
+    except Exception:
+        return False
+
+
+def strip_missing_space_refs(pdf: pikepdf.Pdf) -> int:
+    """Remove space refs to fonts whose program lacks the glyph (clause 7.21.4.1-2).
+
+    Some source CFF subset fonts reference the space glyph (code 32) their embedded
+    program does not contain; UA-1 7.21.4.1 requires every referenced glyph be
+    present. Scoped strictly to glyph-deficient simple fonts (detected via fitz
+    has_glyph, already a pipeline dependency) so fonts that legitimately contain
+    the space are untouched. Only run-trailing spaces are removed, so rendering is
+    unaffected; struct elements' /ActualText preserves the space for assistive tech.
+    Returns the number of space codes removed.
+    """
+    removed = 0
+    cache: dict = {}
+    for page in pdf.pages:
+        res = page.obj.get("/Resources")
+        fonts = res.get("/Font") if res is not None else None
+        if fonts is None:
+            continue
+        deficient = set()
+        for n, f in fonts.items():
+            if str(f.get("/Subtype")) == "/Type0":
+                continue
+            key = f.objgen
+            if key not in cache:
+                cache[key] = _font_lacks_space(f)
+            if cache[key]:
+                deficient.add(str(n))
+        if not deficient:
+            continue
+
+        cur = None
+        changed = False
+        new_cs = []
+        for ins in pikepdf.parse_content_stream(page):
+            op = str(ins.operator)
+            if op == "Tf":
+                cur = str(ins.operands[0])
+            elif cur in deficient and op in ("Tj", "'", '"'):
+                s = bytes(ins.operands[-1])
+                ns = s.rstrip(b"\x20")
+                if ns != s:
+                    removed += len(s) - len(ns)
+                    ops = list(ins.operands)
+                    ops[-1] = pikepdf.String(ns)
+                    ins = pikepdf.ContentStreamInstruction(ops, ins.operator)
+                    changed = True
+            elif cur in deficient and op == "TJ":
+                arr = list(ins.operands[0])
+                for j in range(len(arr) - 1, -1, -1):
+                    if isinstance(arr[j], pikepdf.String):
+                        s = bytes(arr[j])
+                        ns = s.rstrip(b"\x20")
+                        if ns != s:
+                            removed += len(s) - len(ns)
+                            changed = True
+                            arr[j] = pikepdf.String(ns)
+                        break
+                arr = [e for e in arr
+                       if not (isinstance(e, pikepdf.String) and len(bytes(e)) == 0)]
+                ins = pikepdf.ContentStreamInstruction([pikepdf.Array(arr)], ins.operator)
+            new_cs.append(ins)
+        if changed:
+            page.Contents = pdf.make_stream(pikepdf.unparse_content_stream(new_cs))
+
+    if removed:
+        logger.debug("Stripped %d missing-space reference(s).", removed)
+    return removed

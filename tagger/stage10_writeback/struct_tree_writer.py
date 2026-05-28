@@ -208,6 +208,7 @@ def tag_untagged_pdf(
         artifact_wrap_forms,
         inject_bdc_markers,
         sanitize_cid_fonts,
+        strip_missing_space_refs,
         strip_notdef_refs,
     )
 
@@ -218,6 +219,7 @@ def tag_untagged_pdf(
         "links_tagged": 0,
         "cidsets_removed": 0,
         "notdef_stripped": 0,
+        "space_refs_stripped": 0,
     }
 
     try:
@@ -561,6 +563,9 @@ def tag_untagged_pdf(
 
         # 10. Strip inherited .notdef (CID 0) refs from Type0/Identity show ops.
         stats["notdef_stripped"] = strip_notdef_refs(pdf)
+
+        # 11. Strip space refs to glyph-deficient simple fonts (missing space glyph).
+        stats["space_refs_stripped"] = strip_missing_space_refs(pdf)
 
         # Save
         pdf.save(str(output_path))
