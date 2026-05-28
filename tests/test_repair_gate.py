@@ -239,3 +239,72 @@ def test_flag_only_leaves_defects_and_report_predicts_them():
         rep = build_report(fs, FLAG_ONLY)
         assert {x["clause"] for x in rep["findings"]} == clauses_found
         assert {"7.21.8", "7.21.4.1"} <= clauses_found  # matches veraPDF baseline
+
+
+# ----------------------------------------- end-to-end gate via tag_untagged_pdf ---
+
+import json
+
+from pikepdf import Dictionary, Name
+
+from tagger.stage10_writeback.struct_tree_writer import tag_untagged_pdf
+
+
+def _pdf_with_unembedded_font(path):
+    """1-page PDF whose only font (Arial) has a descriptor but no FontFile."""
+    pdf = pikepdf.new()
+    pdf.add_blank_page(page_size=(200, 200))
+    page = pdf.pages[0]
+    fd = pdf.make_indirect(Dictionary({
+        "/Type": Name.FontDescriptor, "/FontName": Name("/Arial"), "/Flags": 32,
+    }))
+    font = pdf.make_indirect(Dictionary({
+        "/Type": Name.Font, "/Subtype": Name.TrueType,
+        "/BaseFont": Name("/Arial"), "/FontDescriptor": fd,
+    }))
+    page.obj["/Resources"] = Dictionary({"/Font": Dictionary({"/F1": font})})
+    page.obj["/Contents"] = pdf.make_stream(b"")
+    pdf.save(str(path))
+    pdf.close()
+
+
+def _font_embedded(path):
+    with pikepdf.open(str(path)) as pdf:
+        for page in pdf.pages:
+            fonts = (page.obj.get("/Resources") or {}).get("/Font") or {}
+            for _n, f in fonts.items():
+                fd = f.get("/FontDescriptor")
+                if fd is not None and any(
+                    fd.get(k) is not None for k in ("/FontFile", "/FontFile2", "/FontFile3")
+                ):
+                    return True
+    return False
+
+
+@pytest.mark.parametrize("mode", [AUTO, CONFIRM, FLAG_ONLY])
+def test_unembedded_font_reported_never_embedded_e2e(tmp_path, mode):
+    """The font-embedding repair (added after the gate existed) flows through the
+    real Stage-10 gate as report-only: surfaced in every mode, never embedded."""
+    src, out = tmp_path / "in.pdf", tmp_path / "out.pdf"
+    _pdf_with_unembedded_font(src)
+    tag_untagged_pdf(str(src), str(out), [], total_pages=1,
+                     repair_mode=mode, approved_ids=set())
+
+    report = json.loads((out.with_suffix(".repairs.json")).read_text())
+    fonts = [f for f in report["findings"] if f["clause"] == "7.21.4.1"]
+    assert len(fonts) == 1, "unembedded-font finding must appear in the report"
+    assert fonts[0]["status"] == "reported", f"must be report-only in {mode}"
+    assert fonts[0]["repair_type"] == MODIFYING and fonts[0]["auto_safe"] is False
+    # The gate must NEVER silently embed a font, in any mode.
+    assert not _font_embedded(out), f"font must stay unembedded in {mode}"
+
+
+def test_report_mode_recorded_in_repairs_json(tmp_path):
+    """The repairs.json records the mode it ran under (audit trail)."""
+    src, out = tmp_path / "in.pdf", tmp_path / "out.pdf"
+    _pdf_with_unembedded_font(src)
+    tag_untagged_pdf(str(src), str(out), [], total_pages=1, repair_mode=FLAG_ONLY)
+    report = json.loads((out.with_suffix(".repairs.json")).read_text())
+    assert report["repair_mode"] == FLAG_ONLY
+    assert report["summary"]["reported"] >= 1
+    assert report["summary"]["applied"] == 0
