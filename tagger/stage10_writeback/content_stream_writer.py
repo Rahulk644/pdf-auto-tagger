@@ -84,23 +84,55 @@ def _tag_bdc(mcid: int, tag: str):
     )
 
 
-def _text_len(instruction, op: str) -> int:
-    """Number of glyphs drawn by a text-showing operator."""
+def _text_len(instruction, op: str, bpc: int = 1) -> int:
+    """Number of glyphs drawn by a text-showing operator.
+
+    Counts CHARACTER CODES — raw bytes // bytes-per-code — NOT decoded-string
+    length. A composite (Type0) font encodes one glyph in `bpc` bytes (2 for the
+    near-universal Identity-H/V), so len(str)/len(bytes) over-counts its glyphs and
+    desyncs the positional char<->glyph mapping in _rewrite_stream. On dp-bench 052
+    that drift left 1043 Type0 glyphs unmatched (1536 glyphs vs 2579 bytes) — the
+    table and most body text fell through to /Artifact (lost to AT and to TEDS).
+    """
+    def _codes(s) -> int:
+        return len(bytes(s)) // bpc
     if op == "TJ":
-        n = 0
-        for item in instruction.operands[0]:
-            if isinstance(item, pikepdf.String):
-                n += len(str(item))
-        return n
+        return sum(_codes(item) for item in instruction.operands[0]
+                   if isinstance(item, pikepdf.String))
     if op == '"':
         # aw ac string " — the string is the last operand.
-        return len(str(instruction.operands[-1]))
+        return _codes(instruction.operands[-1])
     # Tj and ' both take a single string operand.
-    return len(str(instruction.operands[0]))
+    return _codes(instruction.operands[0])
+
+
+def _font_bytes_per_code(font_obj) -> int:
+    """Bytes per character code for a font: composite (Type0) fonts use multi-byte
+    codes (Identity-H/V and the common CJK CMaps are 2-byte), simple fonts 1 byte."""
+    try:
+        if str(font_obj.get("/Subtype")) == "/Type0":
+            return 2
+    except Exception:
+        pass
+    return 1
+
+
+def _build_font_bpc(resources) -> dict:
+    """Map each font resource name (e.g. '/C2_0') to its bytes-per-code, so the
+    rewriter can count glyphs correctly per the currently-selected (Tf) font."""
+    out: dict = {}
+    try:
+        fonts = resources.get("/Font") if resources is not None else None
+        if fonts is not None:
+            for name, fobj in fonts.items():
+                out[str(name)] = _font_bytes_per_code(fobj)
+    except Exception:
+        pass
+    return out
 
 
 def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype,
-                    figure_boxes=None, page_height_pt=None):
+                    figure_boxes=None, page_height_pt=None, font_bpc=None):
     """Run the marked-content state machine over a parsed content stream.
 
     Guarantees that every mark-producing operator ends up inside either a tagged
@@ -129,6 +161,8 @@ def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype,
     mcid_to_tag: dict = {}
     next_mcid = 0
     current_char_idx = 0
+    current_bpc = 1  # bytes-per-code of the current font (Tf); 2 for Type0
+    font_bpc = font_bpc or {}
     active = None  # None | ("tag", key) | ("art",)
     ctm = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
     ctm_stack: list = []
@@ -205,9 +239,16 @@ def _rewrite_stream(instructions, char_to_key, key_to_tag, do_subtype,
                 pass
             new_cs.append(ins)
             continue
+        if op == "Tf":
+            # Track the selected font's bytes-per-code so glyph counting (and thus
+            # the char<->glyph index alignment) is correct for composite fonts.
+            if ins.operands:
+                current_bpc = font_bpc.get(str(ins.operands[0]), 1)
+            new_cs.append(ins)
+            continue
 
         if op in _TEXT_OPS:
-            op_len = _text_len(ins, op)
+            op_len = _text_len(ins, op, current_bpc)
             target = None
             for i in range(current_char_idx, current_char_idx + op_len):
                 if i in char_to_key:
@@ -344,9 +385,10 @@ def inject_bdc_markers(
     # 2. Parse and rewrite the content stream. Even with no tagged text we still
     #    run the state machine so bare graphics get artifact-wrapped.
     cs = pikepdf.parse_content_stream(page)
+    font_bpc = _build_font_bpc(page.obj.get("/Resources"))
     new_cs, element_to_mcids, mcid_to_element, mcid_to_tag = _rewrite_stream(
         cs, char_to_key, key_to_tag, _xobject_subtype_resolver(page.obj),
-        figure_boxes, page_height_pt,
+        figure_boxes, page_height_pt, font_bpc,
     )
 
     # 3. Write back the new content stream
