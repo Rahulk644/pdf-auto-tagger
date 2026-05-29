@@ -107,8 +107,9 @@ class PageElement:
     """False for rotated/vertical glyphs (pdfplumber `upright`). Stage 2 clusters
     rotated text separately so it never interleaves with horizontal lines."""
 
-    source: Literal["pdfplumber", "mineru_ocr"] = "pdfplumber"
-    """Which extraction path produced this element."""
+    source: Literal["pdfplumber", "mineru_ocr", "rapidocr"] = "pdfplumber"
+    """Which extraction path produced this element. `rapidocr` is the CPU-native
+    OCR path (PP-OCRv4 via onnxruntime) used by Stage 1 for scanned pages."""
 
     confidence: float = 1.0
     """Extraction confidence (0.0–1.0). OCR text is typically < 1.0."""

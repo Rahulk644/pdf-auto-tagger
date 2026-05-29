@@ -742,7 +742,11 @@ def tag_untagged_pdf(
 
                 # Regular element
                 mcids = element_to_mcids.get(el.element_id, [])
-                if not mcids:
+                # Drop only truly empty elements; if the element carries text
+                # (e.g. OCR'd lines on a scanned page that have no corresponding
+                # content-stream glyphs to MCID against) we still emit the struct
+                # element with /ActualText so assistive tech reads it.
+                if not mcids and not (el.text or "").strip():
                     i += 1
                     continue
 
@@ -754,9 +758,10 @@ def tag_untagged_pdf(
                     "/Type": Name.StructElem,
                     "/S": Name(f"/{tag_name}"),
                     "/P": doc_elem,
-                    "/K": _mcid_k(mcids),
-                    "/Pg": page.obj,
                 }
+                if mcids:
+                    struct_elem_dict["/K"] = _mcid_k(mcids)
+                    struct_elem_dict["/Pg"] = page.obj
 
                 if el.text:
                     struct_elem_dict["/ActualText"] = String(el.text)

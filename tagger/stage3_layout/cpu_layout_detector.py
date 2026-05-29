@@ -151,10 +151,15 @@ def _merge_docling_tables(pdf_path: str, page_num: int, lattice_boxes: list[tupl
 
 def _image_boxes(page) -> list[tuple]:
     out = []
+    page_area = (page.width * _SCALE) * (page.height * _SCALE)
     for im in (page.images or []):
         x0, top, x1, bottom = (im["x0"] * _SCALE, im["top"] * _SCALE,
                                im["x1"] * _SCALE, im["bottom"] * _SCALE)
-        if (x1 - x0) * (bottom - top) >= _MIN_IMAGE_AREA:
+        area = (x1 - x0) * (bottom - top)
+        # Skip the page-spanning raster that scanned PDFs embed as page background —
+        # treating it as a Picture would swallow every OCR text element via the
+        # _center_inside blocker check, leaving the page empty.
+        if area >= _MIN_IMAGE_AREA and area / max(page_area, 1.0) < 0.7:
             out.append((x0, top, x1, bottom))
     return out
 
