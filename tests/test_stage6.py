@@ -210,7 +210,10 @@ class TestZeroCharElementRule:
     """Tests for elements with no text content."""
 
     def test_empty_text_flagged(self):
-        """Element with empty text should be flagged."""
+        """Element with empty text should be reclassified to Artifact (the rule
+        evolved from 'flag' to 'reclassify->Artifact' so the empty element no
+        longer remains in the struct tree as a content-less /P — see Stage 6
+        ZeroCharElementRule)."""
         el = _make_el(PDFTag.P, text="")
         ctx = ValidationContext(all_elements=[el])
 
@@ -218,7 +221,8 @@ class TestZeroCharElementRule:
         result = rule.check(el, ctx)
 
         assert result is not None
-        assert result.action == "flag"
+        assert result.action == "reclassify"
+        assert result.new_tag == PDFTag.ARTIFACT
 
     def test_whitespace_only_flagged(self):
         """Element with only whitespace should be flagged."""
