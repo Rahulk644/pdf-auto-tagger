@@ -64,6 +64,38 @@ class PageClassifierConfig:
 PAGE_CLASSIFIER = PageClassifierConfig()
 
 
+@dataclass(frozen=True)
+class OCRConfig:
+    """RapidOCR (PP-OCRv4) quality vs speed dial for the scanned-page extractor.
+
+    quality presets map to internal score thresholds; "balanced" is the
+    `rapidocr-onnxruntime` default. "quality" raises the recogniser confidence
+    bar (fewer low-confidence garbage lines) and is the right pick for noisy
+    scans where precision matters more than recall.
+
+    Override at runtime with `TAGGER_OCR_QUALITY=quality` (or "speed" /
+    "balanced"). Honored by tagger/stage1_extraction/scanned_extractor.py.
+    """
+    quality: str = field(default_factory=lambda: os.environ.get(
+        "TAGGER_OCR_QUALITY", "balanced"))
+
+
+OCR = OCRConfig()
+
+
+# Map preset name -> RapidOCR kwargs. Threshold names match the upstream
+# rapidocr-onnxruntime config.yaml.
+def ocr_kwargs_for(preset: str) -> dict:
+    if preset == "quality":
+        # Higher confidence floor on the recogniser, slightly higher det box
+        # threshold -> drops noisy false-positive lines.
+        return {"text_score": 0.6, "box_thresh": 0.6}
+    if preset == "speed":
+        # Looser thresholds, more low-confidence lines but faster overall.
+        return {"text_score": 0.3, "box_thresh": 0.5}
+    return {}  # balanced -> RapidOCR defaults (text_score=0.5)
+
+
 # ---------------------------------------------------------------------------
 # Stage 2 — Text merger thresholds
 # ---------------------------------------------------------------------------

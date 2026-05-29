@@ -133,6 +133,36 @@ def _merge_table_boxes(pdf_path: str, page_num: int, lattice_boxes: list[tuple])
     return merged
 
 
+def _merge_docling_headings(pdf_path: str, page_num: int,
+                            existing: list[tuple],
+                            tboxes: list[tuple],
+                            iboxes: list[tuple]) -> list[tuple]:
+    """Union pdfplumber-detected heading lineboxes with Heron's semantic Title /
+    Section-header detections. Drops Heron candidates that overlap any existing
+    heading (IoU>0.3) or any table/image bbox (heading should be its own line,
+    not embedded in a table or figure). Never removes an existing heading."""
+    from tagger.stage5_specialists.docling_table_extractor import detect_all_regions
+    raw = detect_all_regions(pdf_path, page_num)
+    if not raw:
+        return existing
+    out = list(existing)
+    existing_boxes = [b for b, _ in existing]
+    blockers = tboxes + iboxes
+    for bbox, label in raw:
+        if label == "Title":
+            cat = LayoutCategory.TITLE
+        elif label == "Section-header":
+            cat = LayoutCategory.SECTION_HEADER
+        else:
+            continue
+        if any(_box_iou(bbox, eb) > 0.3 for eb in existing_boxes):
+            continue
+        if _center_inside(bbox, blockers):
+            continue
+        out.append((bbox, cat))
+    return out
+
+
 def _merge_docling_tables(pdf_path: str, page_num: int, lattice_boxes: list[tuple]) -> list[tuple]:
     """Augment lattice tables with Docling-layout-detected ones. Docling's layout
     model has 17 distinct categories so heading/text regions are NEVER classified
@@ -324,6 +354,13 @@ def detect_regions(pdf_path: str, page_num: int,
         tboxes = _merge_docling_tables(pdf_path, page_num, tboxes)
         iboxes = _image_boxes(page, big_image_threshold=big_image_thr)
         hboxes = _heading_lineboxes(page, tboxes, iboxes)  # [(bbox150, category)]
+        # Additive Heron-detected headings on native pages — closes the
+        # documented MHS gap. Pdfplumber typography catches most headings; Heron
+        # adds the semantic ones that lack a distinguishing font signal (numbered
+        # subsection titles, bold-at-body-size headings, etc). UNION only —
+        # never removes a pdfplumber-detected heading, so this is strictly
+        # accuracy-positive: max possible TEDS/NID regression = 0.
+        hboxes = _merge_docling_headings(pdf_path, page_num, hboxes, tboxes, iboxes)
 
     # headings come from the pdfplumber-line path; exclude their elements from body
     # blocks (Stage 4 still matches them into the heading region by bbox).

@@ -37,14 +37,17 @@ _load_failed = False
 
 
 def _load_ocr():
-    """Lazy, one-time RapidOCR singleton load."""
+    """Lazy, one-time RapidOCR singleton load. Quality preset is read from
+    OCR.quality (env: TAGGER_OCR_QUALITY = speed | balanced | quality)."""
     global _ocr, _load_failed
     if _ocr is not None or _load_failed:
         return _ocr is not None
     try:
         from rapidocr_onnxruntime import RapidOCR
-        _ocr = RapidOCR()
-        logger.info("RapidOCR (PP-OCRv4 ONNX) loaded")
+        from tagger.config import OCR, ocr_kwargs_for
+        kwargs = ocr_kwargs_for(OCR.quality)
+        _ocr = RapidOCR(**kwargs)
+        logger.info("RapidOCR (PP-OCRv4 ONNX) loaded (quality=%s)", OCR.quality)
         return True
     except Exception as e:
         _load_failed = True
