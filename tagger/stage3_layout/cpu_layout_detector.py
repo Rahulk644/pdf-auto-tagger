@@ -231,6 +231,45 @@ def _heading_lineboxes(page, tboxes, iboxes) -> list[tuple]:
     return out
 
 
+# Heron's 17-class label -> our LayoutCategory. Classes not in our enum (Document
+# Index, Code, Checkbox-*, Form, Key-Value Region) fall back to TEXT.
+_HERON_LABEL_TO_CATEGORY = {
+    "Caption": LayoutCategory.CAPTION,
+    "Footnote": LayoutCategory.FOOTNOTE,
+    "Formula": LayoutCategory.FORMULA,
+    "List-item": LayoutCategory.LIST_ITEM,
+    "Page-footer": LayoutCategory.PAGE_FOOTER,
+    "Page-header": LayoutCategory.PAGE_HEADER,
+    "Picture": LayoutCategory.PICTURE,
+    "Section-header": LayoutCategory.SECTION_HEADER,
+    "Table": LayoutCategory.TABLE,
+    "Text": LayoutCategory.TEXT,
+    "Title": LayoutCategory.TITLE,
+}
+
+
+def _detect_via_heron(pdf_path: str, page_num: int,
+                      page_w: float, page_h: float) -> list[tuple]:
+    """For MIXED/SCANNED pages: ask Heron for all categorised regions, drop the
+    page-spanning raster (it's the page-image background, not a real Picture),
+    and return [(bbox_150dpi, LayoutCategory), ...] in xy-cut order. pdfplumber
+    can't help here (no text layer, no rules); Heron is the right primitive."""
+    from tagger.stage5_specialists.docling_table_extractor import detect_all_regions
+    raw = detect_all_regions(pdf_path, page_num)
+    if not raw:
+        return []
+    page_area = max(1.0, page_w * page_h)
+    out = []
+    for bbox, label in raw:
+        cat = _HERON_LABEL_TO_CATEGORY.get(label, LayoutCategory.TEXT)
+        area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+        if cat == LayoutCategory.PICTURE and area / page_area >= 0.4:
+            # page-spanning raster background — keep it artifacted, not a Figure
+            continue
+        out.append((bbox, cat))
+    return out
+
+
 def detect_regions(pdf_path: str, page_num: int,
                    elements: list[PageElement],
                    page_type: str = "native") -> list[LayoutRegion]:
@@ -240,10 +279,35 @@ def detect_regions(pdf_path: str, page_num: int,
     it tightens the page-spanning-image guard on mixed/scanned pages so the
     image-of-text background is artifacted and OCR-derived text forms real
     Text/heading regions, not a single Figure that absorbs the whole page."""
-    # MIXED/SCANNED pages: the visible body is the embedded page-image (PREP MOU
-    # ~60% coverage); drop any image >= 40% of the page so OCR PageElements
-    # aren't _center_inside-blocked. NATIVE pages keep the looser 70% threshold
-    # so a large legitimate figure on a paper is still tagged as Picture.
+    # MIXED/SCANNED pages: pdfplumber's text-line / lattice paths can't see the
+    # image-of-text body — Heron operates on the page image and categorises the
+    # regions directly (Title / Section-header / List-item / Caption / Text /
+    # ...), so we use it as the layout source on these pages. NATIVE pages stay
+    # on the proven pdfplumber + lattice + Docling-table-merge path.
+    if page_type in ("mixed", "scanned"):
+        with pdfplumber.open(pdf_path) as pdf:
+            if page_num > len(pdf.pages):
+                return []
+            page = pdf.pages[page_num - 1]
+            page_w = page.width * _SCALE
+            page_h = page.height * _SCALE
+        meta = _detect_via_heron(pdf_path, page_num, page_w, page_h)
+        if meta:
+            order = _xycut_order([m[0] for m in meta])
+            return [
+                LayoutRegion(
+                    region_id=f"r{page_num}_{ro}",
+                    page_num=page_num,
+                    bbox=meta[idx][0],
+                    category=meta[idx][1],
+                    reading_order=ro,
+                    confidence=0.85,
+                )
+                for ro, idx in enumerate(order)
+            ]
+        # Heron unavailable -> fall through to the pdfplumber-driven path with
+        # the tighter big-image threshold so OCR text isn't blocker-trapped.
+
     big_image_thr = 0.4 if page_type in ("mixed", "scanned") else 0.7
     with pdfplumber.open(pdf_path) as pdf:
         if page_num > len(pdf.pages):

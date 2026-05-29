@@ -93,6 +93,20 @@ def detect_tables(pdf_path: "str | Path", page_num: int) -> list[tuple]:
     150-DPI standard coords. Filters to the 'Table' class — other regions (Text,
     Section-header, ...) are NOT returned, so dense-prose pages don't get table
     false-positives the way TATR's binary detection produced."""
+    out = []
+    for bbox, label in detect_all_regions(pdf_path, page_num):
+        if label == "Table":
+            out.append(bbox)
+    return out
+
+
+def detect_all_regions(pdf_path: "str | Path", page_num: int) -> list[tuple]:
+    """All Heron-detected regions on a page: [(bbox_150dpi, label_string), ...].
+    Labels are from Docling's 17-class set (Caption, Footnote, Formula, List-item,
+    Page-footer, Page-header, Picture, Section-header, Table, Text, Title, ...).
+    Used by the CPU layout detector on MIXED/SCANNED pages where the pdfplumber
+    text-line path can't see anything — Heron operates on the page image and
+    categorises directly."""
     if not _load_layout():
         return []
     try:
@@ -105,9 +119,9 @@ def detect_tables(pdf_path: "str | Path", page_num: int) -> list[tuple]:
             img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         out = []
         for det in _layout.predict(img):
-            if det.get("label") == "Table":
-                out.append((float(det["l"]), float(det["t"]),
-                            float(det["r"]), float(det["b"])))
+            bbox = (float(det["l"]), float(det["t"]),
+                    float(det["r"]), float(det["b"]))
+            out.append((bbox, det.get("label")))
         return out
     except Exception as e:
         logger.warning("Docling layout failed on page %d: %s", page_num, e)
