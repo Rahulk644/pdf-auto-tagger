@@ -7,6 +7,7 @@ Import from this module — never hardcode magic numbers in stage code.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -113,6 +114,15 @@ class LayoutConfig:
     """MinerU2.5 layout detection settings."""
 
     model_name: str = "opendatalab/MinerU2.5-Pro-2604-1.2B"
+
+    # Layout backend: "mineru" (GPU VLM) or "cpu" (pdfplumber/xy-cut, born-digital
+    # only, no GPU). The CPU backend resolves the MinerU/GPU dependency for native
+    # PDFs; scanned pages have no text layer and still need MinerU/OCR. Override with
+    # TAGGER_LAYOUT_BACKEND=cpu to run the whole pipeline (and the test suite) locally
+    # without ever spawning MinerU — MinerU must never run on the dev M1.
+    backend: str = field(
+        default_factory=lambda: os.environ.get("TAGGER_LAYOUT_BACKEND", "mineru")
+    )
 
     # Categories MinerU outputs (canonical names)
     categories: tuple[str, ...] = (

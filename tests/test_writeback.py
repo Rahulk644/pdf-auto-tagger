@@ -9,6 +9,15 @@ import pikepdf
 from tagger.pipeline import AutoTaggerPipeline
 from tagger.stage10_writeback.struct_tree_writer import tag_untagged_pdf
 from tagger.models.data_types import PDFTag, TaggedElement
+from tagger.config import LAYOUT
+
+# Some integration assertions encode MinerU's specific layout output (e.g. exact
+# heading levels). The CPU backend (TAGGER_LAYOUT_BACKEND=cpu — used to run the suite
+# locally without spawning MinerU) produces a valid but different layout, so gate them.
+mineru_only = pytest.mark.skipif(
+    LAYOUT.backend != "mineru",
+    reason="asserts MinerU-specific layout output; run with the mineru backend",
+)
 
 
 class TestStructTreeWriter:
@@ -53,6 +62,7 @@ class TestStructTreeWriter:
 
         pdf.close()
 
+    @mineru_only
     def test_heading_tags_in_struct_tree(self, tmp_path):
         """H1 and H2 should appear in struct tree."""
         output_pdf = tmp_path / "tagged.pdf"

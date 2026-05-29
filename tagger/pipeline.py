@@ -285,8 +285,13 @@ class AutoTaggerPipeline:
         logger.info("  Merged: %d chars → %d paragraphs", total_before, total_after)
 
     def _stage3_layout(self, input_pdf: str, doc_data: DocumentData):
-        """Stage 3: Layout detection with MinerU."""
+        """Stage 3: Layout detection. Backend = MinerU (GPU) or CPU (born-digital)."""
         logger.info("[Stage 3] Layout detection...")
+
+        from tagger.config import LAYOUT
+        if LAYOUT.backend == "cpu":
+            self._stage3_layout_cpu(input_pdf, doc_data)
+            return
 
         try:
             from tagger.stage3_layout.layout_detector import MinerULayoutDetector
@@ -325,6 +330,28 @@ class AutoTaggerPipeline:
             )
             # Fallback: classify each merged element as Text
             self._fallback_layout_classification(doc_data)
+
+    def _stage3_layout_cpu(self, input_pdf: str, doc_data: DocumentData):
+        """Stage 3 (CPU backend): GPU-free layout from pdfplumber + Stage-2 elements.
+
+        Born-digital pages get real regions (xy-cut order, font headings, lattice
+        tables, image figures); a scanned page yields no text elements, so it falls
+        back to text-only classification (it genuinely needs MinerU/OCR)."""
+        from tagger.stage3_layout.cpu_layout_detector import detect_regions
+
+        for page_num, page_data in doc_data.pages.items():
+            try:
+                regions = detect_regions(input_pdf, page_num, page_data.elements)
+            except Exception as e:
+                logger.warning("  Page %d: CPU layout failed (%s)", page_num, e)
+                regions = []
+            page_data.layout_regions = regions
+            logger.info("  Page %d: %d regions (CPU)", page_num, len(regions))
+
+        # NB: do NOT run _pdfplumber_table_fallback here — it uses the text-column
+        # strategy that hallucinates grids from prose (it relied on MinerU's prose
+        # regions to suppress itself). The CPU detector already emits gated lattice
+        # tables; borderless tables are the lever-2/TATR gap, not a hallucination job.
 
     def _fallback_layout_classification(self, doc_data: DocumentData):
         """
