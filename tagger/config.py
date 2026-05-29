@@ -274,9 +274,27 @@ SEMANTIC = SemanticConfig()
 
 @dataclass(frozen=True)
 class AltTextConfig:
-    """Qwen2.5-VL-7B settings for figure alt text."""
+    """Figure alt-text VLM settings.
 
+    Two interchangeable VLM backends (the optional, non-default VLM mode; the
+    pipeline still ships placeholder alt text by default):
+      - "gemma_e4b": calls the already-deployed Gemma-4-E4B vLLM endpoint (the QA
+        auditor model) — consolidates the stack on one VLM. DEFAULT.
+      - "qwen": loads Qwen2.5-VL-7B in-process (kept for the head-to-head quality
+        comparison when the alt-text stage is actually tackled).
+    Quality between the two is NOT yet measured (the alt-text quality eval axis is
+    deferred) — see project memory project-alt-text-e4b-swap.
+    """
+
+    # Active VLM backend: "gemma_e4b" (default) | "qwen"
+    vlm_backend: str = "gemma_e4b"
+
+    # Qwen backend model (retained for the future A/B comparison)
     model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"
+
+    # Gemma E4B backend: served model id + env var holding the vLLM endpoint URL
+    gemma_model_name: str = "google/gemma-4-E4B-it"
+    gemma_endpoint_env: str = "GEMMA_ALT_ENDPOINT"
 
     # Maximum tokens for alt text output
     max_output_tokens: int = 150
