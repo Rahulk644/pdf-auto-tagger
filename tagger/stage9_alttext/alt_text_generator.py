@@ -131,9 +131,11 @@ def generate_alt_text_placeholders(
 def _e4b_caption(endpoint: str, fig_img: Image.Image) -> str | None:
     """POST one figure crop to the Gemma-4-E4B vLLM endpoint, return a caption.
 
-    Reuses the QA auditor's HTTP contract ({image_b64, prompt, ...} -> {response}),
-    but with thinking OFF and the accessibility captioning prompt — we want a clean
-    1-2 sentence description, not a reasoning trace.
+    Reuses the QA auditor's HTTP contract ({image_b64, prompt, ...} -> {response}):
+    ONE image per request (one tensor shape — never batch, which deadlocks Gemma's
+    Triton JIT). Thinking defaults OFF for captioning speed (configurable). The
+    server (modal_gemma_vllm.py) serializes per container; parallelism comes from
+    firing these requests concurrently so Modal fans out containers.
     """
     buf = io.BytesIO()
     fig_img.save(buf, format="PNG")
@@ -142,11 +144,11 @@ def _e4b_caption(endpoint: str, fig_img: Image.Image) -> str | None:
         "prompt": ALT_TEXT.system_prompt + "\n\nDescribe this figure.",
         "max_tokens": ALT_TEXT.max_output_tokens,
         "temperature": ALT_TEXT.temperature,
-        "enable_thinking": False,
+        "enable_thinking": ALT_TEXT.gemma_enable_thinking,
     }).encode("utf-8")
     req = urllib.request.Request(
         endpoint, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=300) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     text = (data.get("response") or "").strip()
     return text or None
@@ -157,7 +159,13 @@ def generate_alt_text_e4b(elements: list[TaggedElement], input_pdf: str) -> int:
 
     Endpoint URL comes from the ``ALT_TEXT.gemma_endpoint_env`` environment
     variable. Unset/unreachable -> placeholders (graceful, like the Qwen path).
+
+    Requests fan out CONCURRENTLY (``ALT_TEXT.gemma_parallel`` in flight, one image
+    each) so the per-container-serialized vLLM server scales via Modal container
+    fan-out — the proven-fast pattern; never batch multiple images into one call.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     figures = [el for el in elements if el.pdf_tag == PDFTag.FIGURE and not el.alt_text]
     if not figures:
         return 0
@@ -170,26 +178,39 @@ def generate_alt_text_e4b(elements: list[TaggedElement], input_pdf: str) -> int:
         )
         return generate_alt_text_placeholders(elements, input_pdf)
 
-    logger.info("Generating alt text via Gemma-4-E4B endpoint (%d figures)", len(figures))
+    # Crop all figures first (PyMuPDF render is single-threaded), then fan out.
     doc = fitz.open(input_pdf)
-    count = 0
+    crops: list[tuple[TaggedElement, Image.Image]] = []
     try:
         for el in figures:
-            fig_img = _crop_figure(doc, el)
-            if fig_img is None:
-                continue
-            try:
-                caption = _e4b_caption(endpoint, fig_img)
-            except Exception as e:
-                logger.warning("E4B alt text failed for %s: %s", el.element_id, e)
-                continue
+            img = _crop_figure(doc, el)
+            if img is not None:
+                crops.append((el, img))
+    finally:
+        doc.close()
+
+    logger.info(
+        "Generating alt text via Gemma-4-E4B endpoint (%d figures, parallel=%d)",
+        len(crops), ALT_TEXT.gemma_parallel,
+    )
+
+    def _one(item):
+        el, img = item
+        try:
+            return el, _e4b_caption(endpoint, img)
+        except Exception as e:
+            logger.warning("E4B alt text failed for %s: %s", el.element_id, e)
+            return el, None
+
+    count = 0
+    workers = max(1, min(ALT_TEXT.gemma_parallel, len(crops)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for el, caption in ex.map(_one, crops):
             if caption:
                 el.alt_text = caption
                 el.needs_review = False
                 count += 1
                 logger.debug("E4B alt text for %s: %s", el.element_id, caption[:80])
-    finally:
-        doc.close()
 
     logger.info("Gemma-4-E4B alt text generated for %d figures", count)
     # Placeholders for any figure that didn't get a caption.

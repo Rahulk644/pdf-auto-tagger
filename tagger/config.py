@@ -292,9 +292,19 @@ class AltTextConfig:
     # Qwen backend model (retained for the future A/B comparison)
     model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"
 
-    # Gemma E4B backend: served model id + env var holding the vLLM endpoint URL
+    # Gemma E4B backend: served model id + env var holding the vLLM endpoint URL.
+    # The endpoint MUST be the vLLM winner (modal_gemma_vllm.py: serialized per
+    # container, Triton backend, warmup, container fan-out) — NOT the abandoned
+    # transformers.generate path. Parallelism comes from firing requests
+    # CONCURRENTLY (one image per request, never batched) so Modal fans out
+    # containers — mirrors the QA runner's PARALLEL fan-out, the proven-fast path.
     gemma_model_name: str = "google/gemma-4-E4B-it"
     gemma_endpoint_env: str = "GEMMA_ALT_ENDPOINT"
+    gemma_parallel: int = 10            # concurrent in-flight requests (container fan-out)
+    # Thinking is the big speed knob: OFF ~3x fewer output tokens on this decode-bound
+    # model. Kept ON is the load-bearing accuracy lever for the QA auditor; for alt-text
+    # captioning we default OFF for speed and revisit ON in the deferred quality A/B.
+    gemma_enable_thinking: bool = False
 
     # Maximum tokens for alt text output
     max_output_tokens: int = 150

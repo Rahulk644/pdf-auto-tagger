@@ -53,6 +53,29 @@ def test_e4b_endpoint_error_leaves_placeholder(tmp_path, monkeypatch):
     assert "[Figure" in (fig.alt_text or "") and fig.needs_review is True
 
 
+def test_e4b_fans_out_one_request_per_figure(tmp_path, monkeypatch):
+    """Concurrent fan-out: every figure gets captioned via exactly one request
+    each (never batched into a single multi-image call)."""
+    import threading
+    monkeypatch.setenv("GEMMA_ALT_ENDPOINT", "http://dummy/endpoint")
+    calls = []
+    lock = threading.Lock()
+
+    def fake_caption(ep, img):
+        with lock:
+            calls.append(ep)
+        return f"caption {len(calls)}"
+
+    monkeypatch.setattr(atg, "_e4b_caption", fake_caption)
+    figs = [TaggedElement(element_id=f"f{i}", page_num=1, pdf_tag=PDFTag.FIGURE,
+                          text="", bbox=(100, 100 + i * 50, 400, 140 + i * 50))
+            for i in range(3)]
+    n = atg.generate_alt_text_e4b(figs, _pdf(tmp_path))
+    assert n == 3
+    assert len(calls) == 3                       # one request per figure, not batched
+    assert all(f.alt_text and f.needs_review is False for f in figs)
+
+
 def test_dispatcher_defaults_to_e4b(tmp_path, monkeypatch):
     called = {}
 
