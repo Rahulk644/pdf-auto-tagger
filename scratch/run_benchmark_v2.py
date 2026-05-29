@@ -4,6 +4,11 @@ Runs the full pipeline on the 25 expert-FAILED docs (stripped to untagged in
 input_benchmark_v2/ — 20 were tagged/V1, 5 already untagged) -> output_benchmark_v2/.
 This is the substrate's REMEDIATION axis: can our V2 pipeline bring expert-failed
 docs to passing per the verdict contracts. Run:  modal run scratch/run_benchmark_v2.py
+
+Large tagged outputs (e.g. Missouri, the functional_hyperlinks docs) exceed Modal's
+function-return-value transport and fail with "BlobGet not implemented". So the
+remote function writes outputs to a modal.Volume and returns only their names; the
+local entrypoint streams them back from the Volume. No large value crosses the wire.
 """
 import os
 from pathlib import Path
@@ -21,13 +26,21 @@ image = (
 
 app = modal.App("pdf-auto-tagger-benchmark-v2")
 
+# Outputs flow through this Volume instead of the function return value, so
+# arbitrarily large tagged PDFs never hit Modal's return-value blob transport.
+out_vol = modal.Volume.from_name("pdf-auto-tagger-benchmark-v2-out", create_if_missing=True)
 
-@app.function(image=image, gpu="A10G", timeout=3600)
-def run_tagger_remotely(pdf_bytes: bytes, filename: str) -> tuple[bytes, bytes]:
+
+@app.function(image=image, gpu="A10G", timeout=3600, volumes={"/outputs": out_vol})
+def run_tagger_remotely(pdf_bytes: bytes, filename: str) -> dict:
     import sys
     sys.path.append("/root")
     from tagger.pipeline import AutoTaggerPipeline
     import tempfile
+
+    stem = Path(filename).stem
+    out_name = filename
+    report_name = f"{stem}_report.json"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, filename)
@@ -37,13 +50,16 @@ def run_tagger_remotely(pdf_bytes: bytes, filename: str) -> tuple[bytes, bytes]:
             f.write(pdf_bytes)
         pipeline = AutoTaggerPipeline()
         pipeline.run(input_pdf=input_path, output_pdf=output_path, report_path=report_path)
-        with open(output_path, "rb") as f:
-            out_bytes = f.read()
-        report_bytes = b""
-        if os.path.exists(report_path):
-            with open(report_path, "rb") as f:
-                report_bytes = f.read()
-    return out_bytes, report_bytes
+
+        with open(output_path, "rb") as src, open(f"/outputs/{out_name}", "wb") as dst:
+            dst.write(src.read())
+        has_report = os.path.exists(report_path)
+        if has_report:
+            with open(report_path, "rb") as src, open(f"/outputs/{report_name}", "wb") as dst:
+                dst.write(src.read())
+
+    out_vol.commit()
+    return {"out_name": out_name, "report_name": report_name if has_report else None}
 
 
 @app.local_entrypoint()
@@ -55,10 +71,12 @@ def main():
     print(f"Remediation regen: {len(pdfs)} stripped failed docs -> {out_dir}")
     for pdf_path in pdfs:
         try:
-            tagged, report = run_tagger_remotely.remote(pdf_path.read_bytes(), pdf_path.name)
-            (out_dir / pdf_path.name).write_bytes(tagged)
-            if report:
-                (out_dir / f"{pdf_path.stem}_report.json").write_bytes(report)
+            res = run_tagger_remotely.remote(pdf_path.read_bytes(), pdf_path.name)
+            (out_dir / res["out_name"]).write_bytes(b"".join(out_vol.read_file(res["out_name"])))
+            if res["report_name"]:
+                (out_dir / res["report_name"]).write_bytes(
+                    b"".join(out_vol.read_file(res["report_name"]))
+                )
             print(f"OK {pdf_path.name}")
         except Exception as e:
             print(f"FAIL {pdf_path.name}: {e}")
