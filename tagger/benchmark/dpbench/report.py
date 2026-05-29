@@ -11,15 +11,25 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-# Snapshot of opendataloader-bench prediction/*/evaluation.json metrics.score
-# (overall/nid/teds/teds_s/mhs). Read 2026-05-29. Refresh via load_published().
-PUBLISHED: Dict[str, Dict[str, float]] = {
-    "opendataloader-hybrid": {"overall": 0.907, "nid": 0.934, "teds": 0.928, "teds_s": 0.945, "mhs": 0.821},
-    "docling":               {"overall": 0.882, "nid": 0.898, "teds": 0.887, "teds_s": 0.901, "mhs": 0.824},
-    "marker":                {"overall": 0.861, "nid": 0.890, "teds": 0.808, "teds_s": 0.834, "mhs": 0.796},
-    "mineru":                {"overall": 0.831, "nid": 0.857, "teds": 0.873, "teds_s": 0.904, "mhs": 0.743},
-    "opendataloader (Fast)": {"overall": 0.831, "nid": 0.902, "teds": 0.489, "teds_s": 0.513, "mhs": 0.739},
-    "markitdown":            {"overall": 0.589, "nid": 0.844, "teds": 0.273, "teds_s": 0.328, "mhs": 0.000},
+# Snapshot of the opendataloader.org/docs/benchmark public leaderboard (read 2026-05-29,
+# full 13-engine field). The leaderboard column names map to our metric keys as:
+# Reading Order = nid, Table = teds, Heading = mhs. teds_s (structure-only TEDS) is only
+# available for the 6 engines carried from prediction/*/evaluation.json; the leaderboard
+# itself doesn't publish it, so the newer engines have no teds_s. speed = s/page (lower is
+# better), license carried for the acquisition-positioning read. Refresh via load_published().
+PUBLISHED: Dict[str, Dict[str, Any]] = {
+    "opendataloader-hybrid": {"overall": 0.907, "nid": 0.934, "teds": 0.928, "teds_s": 0.945, "mhs": 0.821, "speed": 0.463, "license": "Apache-2.0"},
+    "nutrient":              {"overall": 0.885, "nid": 0.925, "teds": 0.708, "mhs": 0.819, "speed": 0.008, "license": "Commercial"},
+    "docling":               {"overall": 0.882, "nid": 0.898, "teds": 0.887, "teds_s": 0.901, "mhs": 0.824, "speed": 0.762, "license": "MIT"},
+    "marker":                {"overall": 0.861, "nid": 0.890, "teds": 0.808, "teds_s": 0.834, "mhs": 0.796, "speed": 53.932, "license": "GPL-3.0"},
+    "unstructured [hi_res]": {"overall": 0.841, "nid": 0.904, "teds": 0.588, "mhs": 0.749, "speed": 3.008, "license": "Apache-2.0"},
+    "edgeparse":             {"overall": 0.837, "nid": 0.894, "teds": 0.717, "mhs": 0.706, "speed": 0.036, "license": "Apache-2.0"},
+    "opendataloader (Fast)": {"overall": 0.831, "nid": 0.902, "teds": 0.489, "teds_s": 0.513, "mhs": 0.739, "speed": 0.015, "license": "Apache-2.0"},
+    "mineru":                {"overall": 0.831, "nid": 0.857, "teds": 0.873, "teds_s": 0.904, "mhs": 0.743, "speed": 5.962, "license": "AGPL-3.0"},
+    "pymupdf4llm":           {"overall": 0.732, "nid": 0.885, "teds": 0.401, "mhs": 0.412, "speed": 0.091, "license": "AGPL-3.0"},
+    "unstructured":          {"overall": 0.686, "nid": 0.882, "teds": 0.000, "mhs": 0.388, "speed": 0.077, "license": "Apache-2.0"},
+    "markitdown":            {"overall": 0.589, "nid": 0.844, "teds": 0.273, "teds_s": 0.328, "mhs": 0.000, "speed": 0.114, "license": "MIT"},
+    "liteparse":             {"overall": 0.576, "nid": 0.866, "teds": 0.000, "mhs": 0.000, "speed": 1.061, "license": "Apache-2.0"},
 }
 
 _ENGINE_DIR_LABELS = {
@@ -27,6 +37,7 @@ _ENGINE_DIR_LABELS = {
     "opendataloader-hybrid": "opendataloader-hybrid",
 }
 _COLS = ["overall", "nid", "nid_s", "teds", "teds_s", "mhs", "mhs_s"]
+_EXTRA_COLS = ["speed", "license"]
 
 
 def load_published(odl_repo: str | Path) -> Dict[str, Dict[str, float]]:
@@ -68,22 +79,31 @@ def format_scorecard(
         "mhs_s": score.get("mhs_s_mean"),
     }
 
-    header = "| engine | " + " | ".join(_COLS) + " |"
-    sep = "|" + "---|" * (len(_COLS) + 1)
+    all_cols = _COLS + _EXTRA_COLS
+    header = "| engine | " + " | ".join(all_cols) + " |"
+    sep = "|" + "---|" * (len(all_cols) + 1)
     rows = [header, sep]
-    # our row first (highlighted)
-    rows.append("| **" + our_label + "** | " + " | ".join(_fmt(ours.get(c)) for c in _COLS) + " |")
+
+    def _cell(m: Dict[str, Any], c: str) -> str:
+        v = m.get(c)
+        if c == "license":
+            return v if isinstance(v, str) else "  -  "
+        return _fmt(v)
+
+    # our row first (highlighted); we have no speed/license self-measurement yet
+    rows.append("| **" + our_label + "** | " + " | ".join(_cell(ours, c) for c in all_cols) + " |")
     # reference engines, sorted by overall desc
     for name, m in sorted(published.items(), key=lambda kv: kv[1].get("overall") or 0, reverse=True):
-        rows.append("| " + name + " | " + " | ".join(_fmt(m.get(c)) for c in _COLS) + " |")
+        rows.append("| " + name + " | " + " | ".join(_cell(m, c) for c in all_cols) + " |")
 
     n = aggregate.get("document_count", len(aggregate.get("documents", []) or []))
     footer = (
         f"\n_n={n} docs scored; tables in {aggregate.get('teds_count', 0)}, "
         f"headings in {aggregate.get('mhs_count', 0)}; "
         f"missing predictions {aggregate.get('missing_predictions', 0)}._\n"
-        "_Reference numbers: opendataloader-bench published snapshot (2026-05-29). "
-        "ODL 'Fast' = the deterministic table bar (TEDS 0.489)._"
+        "_Reference: opendataloader.org/docs/benchmark public leaderboard (2026-05-29, "
+        "full 13-engine field). Cols nid/teds/mhs = their Reading Order/Table/Heading; "
+        "speed = s/page (lower better). ODL 'Fast' = the deterministic table bar (TEDS 0.489)._"
     )
     return "\n".join(rows) + "\n" + footer
 
