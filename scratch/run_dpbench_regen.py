@@ -22,11 +22,13 @@ image = (
 
 app = modal.App("pdf-auto-tagger-dpbench")
 
-IN_DIR = "/Users/rahulkhatri/Tagger/input_dpbench_pilot"
-OUT_DIR = "/Users/rahulkhatri/Tagger/output_dpbench_pilot"
+# Dirs configurable for pilot vs full corpus:
+#   DPBENCH_IN=~/benchmarks/opendataloader-bench/pdfs DPBENCH_OUT=output_dpbench_full
+IN_DIR = os.environ.get("DPBENCH_IN", "/Users/rahulkhatri/Tagger/input_dpbench_pilot")
+OUT_DIR = os.environ.get("DPBENCH_OUT", "/Users/rahulkhatri/Tagger/output_dpbench_pilot")
 
 
-@app.function(image=image, gpu="A10G", timeout=3600)
+@app.function(image=image, gpu="A10G", timeout=3600, max_containers=10)
 def run_tagger_remotely(pdf_bytes: bytes, filename: str) -> tuple[bytes, bytes]:
     import sys, tempfile, time
     sys.path.append("/root")
@@ -53,12 +55,23 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     pdfs = sorted(in_dir.glob("*.pdf"))
     print(f"dp-bench regen: {len(pdfs)} docs -> {out_dir}")
-    for p in pdfs:
-        try:
-            tagged, report = run_tagger_remotely.remote(p.read_bytes(), p.name)
-            (out_dir / p.name).write_bytes(tagged)
-            if report:
-                (out_dir / f"{p.stem}_report.json").write_bytes(report)
-            print(f"OK {p.name}")
-        except Exception as e:
-            print(f"FAIL {p.name}: {e}")
+    names = [p.name for p in pdfs]
+    payloads = [p.read_bytes() for p in pdfs]
+    # Fan out across containers (near cost-neutral, ~cuts wall-clock); skip docs
+    # that raise rather than aborting the batch.
+    ok = fail = 0
+    for name, result in zip(
+        names,
+        run_tagger_remotely.map(payloads, names, return_exceptions=True),
+    ):
+        if isinstance(result, Exception):
+            fail += 1
+            print(f"FAIL {name}: {result}")
+            continue
+        tagged, report = result
+        (out_dir / name).write_bytes(tagged)
+        if report:
+            (out_dir / f"{Path(name).stem}_report.json").write_bytes(report)
+        ok += 1
+        print(f"OK {name}")
+    print(f"done: ok={ok} fail={fail}")
