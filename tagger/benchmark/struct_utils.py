@@ -95,7 +95,11 @@ def tag_counts_open(pdf: pikepdf.Pdf) -> Counter | None:
         for c in (k if isinstance(k, Array) else [k] if k is not None else []):
             walk(c)
 
-    walk(sr.get("/K"))
+    # /K may be a single struct elem OR an array of them (spec-legal; ODL and
+    # other taggers emit array-rooted trees). Unwrap the top like the other readers.
+    top = sr.get("/K")
+    for node in (top if isinstance(top, Array) else [top] if top is not None else []):
+        walk(node)
     return counts
 
 
