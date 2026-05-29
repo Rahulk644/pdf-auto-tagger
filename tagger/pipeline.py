@@ -663,6 +663,7 @@ class AutoTaggerPipeline:
     def _stage8_refine(self, doc_data: DocumentData):
         """Stage 8: Semantic refinement."""
         from tagger.stage8_semantic.heading_ranker import assign_heading_levels
+        from tagger.stage8_semantic.heading_hierarchy_enforcer import enforce_heading_hierarchy
         from tagger.stage8_semantic.toc_detector import detect_toc_entries
         from tagger.stage8_semantic.artifact_detector import detect_artifacts
         from tagger.stage8_semantic.caption_detector import detect_captions
@@ -680,6 +681,10 @@ class AutoTaggerPipeline:
 
         # 8a: Heading levels
         assign_heading_levels(all_tagged)
+        # 8a': Enforce PDF/UA-1 heading-hierarchy rules: no skips, first=H1,
+        # no empty/punctuation-only headings. Deterministic post-process on
+        # whatever the font-tier ranker chose.
+        enforce_heading_hierarchy(all_tagged)
 
         # 8b: TOC detection
         detect_toc_entries(all_tagged, doc_data.num_pages)
