@@ -99,6 +99,29 @@ def generate_alt_text_siglip(
     if not figures:
         return 0
 
+    # Captions Stage 8 has already detected — used so the alt-text doesn't
+    # duplicate a caption that's already structurally attached to the figure
+    # (McGraw-Hill: do not be redundant).
+    captions = [el for el in elements if el.pdf_tag == PDFTag.CAPTION
+                and el.text and el.text.strip()]
+
+    def _has_caption(fig: TaggedElement) -> bool:
+        # Match captions on the same page that sit immediately above or below
+        # the figure within ~50px (rendered DPI, the typical caption gap).
+        fx0, fy0, fx1, fy1 = fig.bbox
+        for cap in captions:
+            if cap.page_num != fig.page_num:
+                continue
+            cx0, cy0, cx1, cy1 = cap.bbox
+            x_overlap = min(fx1, cx1) - max(fx0, cx0)
+            if x_overlap <= 0:
+                continue
+            below_gap = cy0 - fy1
+            above_gap = fy0 - cy1
+            if (0 <= below_gap <= 50) or (0 <= above_gap <= 50):
+                return True
+        return False
+
     tagged = decorative = 0
     remaining: list[TaggedElement] = []
     try:
@@ -109,7 +132,7 @@ def generate_alt_text_siglip(
                     remaining.append(el)
                     continue
                 bucket, conf = classify_figure(crop)
-                alt = bucket_to_alt_text(bucket, conf)
+                alt = bucket_to_alt_text(bucket, conf, has_caption=_has_caption(el))
                 if alt is None:
                     # Decorative -> reclassify to /Artifact (no /Alt, screen readers skip)
                     el.pdf_tag = PDFTag.ARTIFACT

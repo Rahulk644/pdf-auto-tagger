@@ -96,29 +96,43 @@ def classify_figure(image) -> Tuple[str, float]:
         return ("other", 0.0)
 
 
-def bucket_to_alt_text(bucket: str, confidence: float = 1.0) -> Optional[str]:
+def bucket_to_alt_text(bucket: str, confidence: float = 1.0,
+                        has_caption: bool = False) -> Optional[str]:
     """Apply McGraw-Hill guideline templates per bucket.
     Returns None for `decorative` (above threshold) -> caller reclassifies as
-    ARTIFACT (PDF4 technique — screen readers must skip)."""
+    ARTIFACT (PDF4 technique — screen readers must skip).
+
+    has_caption=True trims the "Refer to long description" suffix on complex
+    types (chart/diagram/schematic/map) — the guidelines explicitly forbid
+    duplicating the caption, and a screen reader will already read the
+    Caption element next to the Figure. Bucket label alone is enough."""
     if bucket == "decorative" and confidence >= _DECORATIVE_THRESHOLD:
         return None
-    # All non-decorative cases: a short, type-prefixed alt text. Guidelines:
-    # "Note the image format only when important to the content" — for accessibility
-    # the type prefix IS important (a chart needs a long description, a photo
-    # doesn't), so we keep them. Decorative is the only case that gets no /Alt.
-    templates = {
+    # Type-prefixed templates. The "Refer to long description" suffix on the
+    # complex types signals to a downstream reviewer that the figure needs a
+    # narrative description; when an in-PDF caption is present (Stage 8's caption
+    # detector tagged it) the caption fills that role, so we drop the suffix
+    # to avoid the redundancy the guidelines call out.
+    complex_with_suffix = {
+        "chart":     ("Chart",    "Refer to long description."),
+        "diagram":   ("Diagram",  "Refer to long description."),
+        "schematic": ("Schematic","Refer to long description."),
+        "map":       ("Map",      "Refer to long description."),
+    }
+    bare = {
         "logo":         "Logo.",
         "photograph":   "Photograph.",
-        "chart":        "Chart. Refer to long description.",
-        "diagram":      "Diagram. Refer to long description.",
-        "schematic":    "Schematic. Refer to long description.",
-        "map":          "Map. Refer to long description.",
         "screenshot":   "Screenshot.",
         "illustration": "Illustration.",
     }
-    alt = templates.get(bucket, "Figure. Refer to long description.")
-    # Hard cap per guideline (we're already well under, but enforce so v2 with
-    # caption-stitching can't accidentally blow past it).
+    if bucket in complex_with_suffix:
+        label, suffix = complex_with_suffix[bucket]
+        alt = f"{label}." if has_caption else f"{label}. {suffix}"
+    elif bucket in bare:
+        alt = bare[bucket]
+    else:
+        alt = "Figure." if has_caption else "Figure. Refer to long description."
+    # Hard cap per guideline (we're already well under, but enforce).
     if len(alt) > _MAX_ALT_LEN:
         alt = alt[: _MAX_ALT_LEN - 3].rstrip() + "..."
     return alt
