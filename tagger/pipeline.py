@@ -713,17 +713,27 @@ class AutoTaggerPipeline:
             page_data.tagged_elements = by_page.get(page_num, [])
 
     def _stage9_alttext(self, input_pdf: str, doc_data: DocumentData):
-        """Stage 9: Alt text for figure elements."""
-        from tagger.stage9_alttext.alt_text_generator import generate_alt_text_placeholders
-
-        logger.info("[Stage 9] Alt text generation (placeholder mode)...")
+        """Stage 9: Alt text for figure elements. Mode = ALT_TEXT.mode (default
+        'siglip'; overridable via TAGGER_ALT_TEXT_MODE)."""
+        from tagger.config import ALT_TEXT
+        from tagger.stage9_alttext.alt_text_generator import (
+            generate_alt_text_placeholders, generate_alt_text_siglip,
+            generate_alt_text_vlm,
+        )
 
         all_tagged: list[TaggedElement] = []
         for page_data in doc_data.pages.values():
             all_tagged.extend(page_data.tagged_elements)
 
-        count = generate_alt_text_placeholders(all_tagged, input_pdf)
-        logger.info("  Generated %d placeholder alt texts", count)
+        mode = ALT_TEXT.mode
+        logger.info("[Stage 9] Alt text generation (mode=%s)...", mode)
+        if mode == "siglip":
+            count = generate_alt_text_siglip(all_tagged, input_pdf)
+        elif mode == "vlm":
+            count = generate_alt_text_vlm(all_tagged, input_pdf)
+        else:
+            count = generate_alt_text_placeholders(all_tagged, input_pdf)
+        logger.info("  Generated %d alt texts", count)
 
     def _stage10_write(self, input_pdf: str, output_pdf: str, doc_data: DocumentData):
         """Stage 10: Struct tree writeback."""

@@ -307,7 +307,20 @@ class AltTextConfig:
     deferred) — see project memory project-alt-text-e4b-swap.
     """
 
-    # Active VLM backend: "gemma_e4b" (default) | "qwen"
+    # Alt-text generation mode (env override: TAGGER_ALT_TEXT_MODE):
+    #   "siglip"      — zero-shot SigLIP classifies the figure into a type bucket
+    #                   (Chart/Diagram/Photo/Logo/Map/Decorative/...), then a McGraw-
+    #                   Hill-aligned template produces the /Alt. Decorative figures are
+    #                   reclassified to /Artifact (PDF4 technique). CPU, MIT/Apache.
+    #                   DEFAULT — real product win over the legacy review-required
+    #                   placeholder, with no GPU dependency. Falls back to placeholder
+    #                   if transformers/the SigLIP weights are missing.
+    #   "placeholder" — legacy behaviour: every figure gets the review-required string.
+    #   "vlm"         — the optional Gemma-E4B / Qwen path below (GPU).
+    mode: str = field(default_factory=lambda: __import__("os").environ.get(
+        "TAGGER_ALT_TEXT_MODE", "siglip"))
+
+    # Active VLM backend (only when mode="vlm"): "gemma_e4b" (default) | "qwen"
     vlm_backend: str = "gemma_e4b"
 
     # Qwen backend model (retained for the future A/B comparison)

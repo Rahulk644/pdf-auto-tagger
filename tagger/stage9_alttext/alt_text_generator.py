@@ -68,6 +68,70 @@ def generate_alt_text_vlm(elements: list[TaggedElement], input_pdf: str) -> int:
     return generate_alt_text_placeholders(elements, input_pdf)
 
 
+def generate_alt_text_siglip(
+    elements: list[TaggedElement],
+    input_pdf: str | None = None,
+) -> int:
+    """Zero-shot figure-type alt text via SigLIP + McGraw-Hill templates.
+
+    For each FIGURE element:
+      1. Crop the figure region from the rendered page.
+      2. SigLIP zero-shot classifies it into one of: decorative, logo, photograph,
+         chart, diagram, schematic, map, screenshot, illustration.
+      3. Decorative figures are reclassified to /Artifact (PDF4 technique — screen
+         readers must skip; the figure had no informational value).
+      4. Every other bucket gets a short type-prefixed /Alt per the McGraw-Hill
+         guidelines (e.g. "Chart. Refer to long description." — the guideline-blessed
+         pattern for complex images that need a longer description elsewhere).
+      5. 150-character cap is enforced inside the template builder.
+
+    Falls back to the legacy placeholder generator if SigLIP/torch are unavailable
+    or input_pdf is missing (we need the page render to crop figures).
+    """
+    if input_pdf is None:
+        return generate_alt_text_placeholders(elements, input_pdf)
+
+    from tagger.stage9_alttext.siglip_figure_classifier import (
+        classify_figure, bucket_to_alt_text,
+    )
+
+    figures = [el for el in elements if el.pdf_tag == PDFTag.FIGURE and not el.alt_text]
+    if not figures:
+        return 0
+
+    tagged = decorative = 0
+    remaining: list[TaggedElement] = []
+    try:
+        with fitz.open(input_pdf) as doc:
+            for el in figures:
+                crop = _crop_figure(doc, el)
+                if crop is None:
+                    remaining.append(el)
+                    continue
+                bucket, conf = classify_figure(crop)
+                alt = bucket_to_alt_text(bucket, conf)
+                if alt is None:
+                    # Decorative -> reclassify to /Artifact (no /Alt, screen readers skip)
+                    el.pdf_tag = PDFTag.ARTIFACT
+                    decorative += 1
+                    continue
+                el.alt_text = alt
+                el.needs_review = False
+                tagged += 1
+    except Exception as e:
+        logger.warning("SigLIP alt-text run failed (%s); falling back to placeholders", e)
+        return generate_alt_text_placeholders(elements, input_pdf)
+
+    if tagged or decorative:
+        logger.info("SigLIP alt text: %d figures classified, %d reclassified as Artifact",
+                    tagged, decorative)
+    # Any figures we couldn't crop fall through to the placeholder generator so the
+    # PDF stays /UA-1 valid (every Figure carries an /Alt).
+    if remaining:
+        generate_alt_text_placeholders(remaining, input_pdf)
+    return tagged + decorative
+
+
 def generate_alt_text_placeholders(
     elements: list[TaggedElement],
     input_pdf: str | None = None,
