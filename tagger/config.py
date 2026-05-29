@@ -242,6 +242,22 @@ class SemanticConfig:
     # real content (a body line that begins inside the band), not furniture.
     artifact_max_furniture_words: int = 12
 
+    # Artifact: repeated vertical-margin watermark detection (e.g. the rotated
+    # "NIH-PA Author Manuscript" running up the side of HHS/NIH manuscripts). A
+    # candidate is a tall, narrow (rotated/vertical) text element sitting in the
+    # left/right margin that recurs on multiple pages in the same x-band. Such
+    # furniture gets mis-tagged /P and jams the assistive reading order. Three
+    # signals must hold together to avoid catching legitimate vertical marginalia
+    # (rotated page numbers — too small; sidebar callouts — vary per page):
+    #   aspect (h/w) >= watermark_min_aspect          (orientation: vertical)
+    #   x-center within watermark_margin_x_fraction of an edge  (in the margin)
+    #   recurs on >= artifact_min_page_occurrences pages in the same x-band
+    # Calibrated on the NIH reading-order docs: watermark aspect 8-50, xc-frac
+    # ~0.04; body aspect <=0.3, xc-frac >=0.28 — orders-of-magnitude separation.
+    watermark_min_aspect: float = 3.0
+    watermark_margin_x_fraction: float = 0.15
+    watermark_x_tolerance: float = 0.03
+
     # Caption regex patterns
     caption_patterns: tuple[str, ...] = (
         r"^(Figure|Fig\.?|Table|Tbl\.?)\s*\d+",

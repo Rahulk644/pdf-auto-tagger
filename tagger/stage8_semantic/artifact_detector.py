@@ -27,11 +27,12 @@ def detect_artifacts(
     elements: list[TaggedElement],
     total_pages: int | None = None,
     page_heights: dict[int, float] | None = None,
+    page_widths: dict[int, float] | None = None,
 ) -> list[TaggedElement]:
     """
-    Detect running headers, footers, and page numbers.
+    Detect running headers, footers, page numbers, and margin watermarks.
 
-    Three complementary passes, each re-tagging matches as Artifact:
+    Four complementary passes, each re-tagging matches as Artifact:
       1. Repeated text at the same Y across pages (running headers/footers).
       2. Page numbers at consistent Y across pages.
       3. Margin-band furniture — short content in the top/bottom margin of a
@@ -39,6 +40,10 @@ def detect_artifacts(
          numbers and running headers on short excerpts and recto/verso docs the
          repetition passes miss. Requires ``page_heights`` (standard-DPI page
          height per page_num); skipped when not provided.
+      4. Repeated vertical-margin watermarks — tall, narrow (rotated) text in the
+         left/right margin recurring across pages (e.g. "NIH-PA Author
+         Manuscript"). The Y-bucketed repetition pass misses these because the
+         vertical extent/text varies per page. Requires both page dimensions.
 
     Modifies elements in-place and returns the same list.
     """
@@ -56,6 +61,12 @@ def detect_artifacts(
     # Single-page margin-band furniture (generalizes to short excerpts)
     if page_heights:
         artifact_count += _detect_margin_furniture(elements, page_heights)
+
+    # Repeated vertical-margin watermarks (rotated side text)
+    if page_heights and page_widths:
+        artifact_count += _detect_margin_watermark(
+            elements, total_pages, page_widths, page_heights
+        )
 
     logger.info("Artifact detector: tagged %d elements as Artifact", artifact_count)
     return elements
@@ -102,6 +113,61 @@ def _detect_margin_furniture(
             "Margin-furniture artifact (page %d, frac=%.3f): '%s'",
             el.page_num, frac, (el.text or "").strip()[:40],
         )
+
+    return tagged
+
+
+def _detect_margin_watermark(
+    elements: list[TaggedElement],
+    total_pages: int,
+    page_widths: dict[int, float],
+    page_heights: dict[int, float],
+) -> int:
+    """Tag repeated vertical-margin watermarks (rotated side text) as Artifact.
+
+    A watermark candidate is an eligible element that is (a) tall and narrow —
+    aspect (h/w) >= ``watermark_min_aspect`` — signalling rotated/vertical text,
+    and (b) horizontally centred within ``watermark_margin_x_fraction`` of the
+    left or right page edge. Candidates are grouped by x-band; a band is treated
+    as a watermark only if it recurs on at least ``artifact_min_page_occurrences``
+    pages (capped at total_pages-1). The three signals together exclude rotated
+    page numbers (too small → low aspect) and per-page sidebar callouts (text/
+    position vary → no recurring x-band).
+    """
+    cfg = SEMANTIC
+    min_occurrences = min(cfg.artifact_min_page_occurrences, max(2, total_pages - 1))
+
+    # x_bucket -> list of candidate elements (one band per margin watermark)
+    bands: dict[int, list[TaggedElement]] = defaultdict(list)
+
+    for el in elements:
+        if el.pdf_tag == PDFTag.ARTIFACT or el.pdf_tag not in _FURNITURE_ELIGIBLE:
+            continue
+        pw = page_widths.get(el.page_num)
+        ph = page_heights.get(el.page_num)
+        if not pw or not ph:
+            continue
+        w = el.bbox[2] - el.bbox[0]
+        h = el.bbox[3] - el.bbox[1]
+        if w <= 0 or (h / w) < cfg.watermark_min_aspect:
+            continue
+        xc_frac = ((el.bbox[0] + el.bbox[2]) / 2.0) / pw
+        if not (xc_frac < cfg.watermark_margin_x_fraction
+                or xc_frac > 1.0 - cfg.watermark_margin_x_fraction):
+            continue
+        bands[round(xc_frac / cfg.watermark_x_tolerance)].append(el)
+
+    tagged = 0
+    for band_els in bands.values():
+        if len({el.page_num for el in band_els}) < min_occurrences:
+            continue
+        for el in band_els:
+            el.pdf_tag = PDFTag.ARTIFACT
+            tagged += 1
+            logger.debug(
+                "Margin-watermark artifact (page %d): '%s'",
+                el.page_num, (el.text or "").strip()[:40],
+            )
 
     return tagged
 

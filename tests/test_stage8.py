@@ -180,6 +180,94 @@ class TestMarginFurniture:
         assert els[0].pdf_tag == PDFTag.P
 
 
+class TestMarginWatermark:
+    """Repeated vertical-margin watermark detection (rotated side text)."""
+
+    PW = {1: 612.0, 2: 612.0, 3: 612.0}
+    PH = {1: 792.0, 2: 792.0, 3: 792.0}
+
+    @staticmethod
+    def _el(tag, page, bbox, text, eid):
+        return TaggedElement(element_id=eid, page_num=page, pdf_tag=tag,
+                             text=text, bbox=bbox, font_size=11.0, confidence=0.8)
+
+    def _watermark(self, page, text):
+        # tall, narrow, left margin: x0=20 x1=32 (w=12), y 100..668 (h=568) -> aspect 47
+        return self._el(PDFTag.P, page, (20, 100, 32, 668), text, f"wm{page}")
+
+    # Distinct text per page so the exact-match repeated-text pass never fires —
+    # isolating the geometric watermark pass under test.
+    _BODY_TEXT = {1: "the quick brown fox jumps over", 2: "lorem ipsum dolor sit amet",
+                  3: "alpha beta gamma delta epsilon zeta"}
+
+    def _body(self, page):
+        return self._el(PDFTag.P, page, (150, 100, 450, 120),
+                        self._BODY_TEXT[page], f"b{page}")
+
+    def test_vertical_watermark_repeated_caught(self):
+        """A tall, narrow margin element recurring across pages is artifacted.
+        Text varies per page so the exact-match repeated-text pass cannot catch
+        it — only the geometric watermark pass can."""
+        els = [
+            self._watermark(1, "Author Manuscript Author Manuscript"),
+            self._body(1),
+            self._watermark(2, "Author Manuscript Author Manuscript Author"),
+            self._body(2),
+            self._watermark(3, "Author Manuscript Author"),
+            self._body(3),
+        ]
+        detect_artifacts(els, total_pages=3, page_heights=self.PH, page_widths=self.PW)
+        wm = [e for e in els if e.element_id.startswith("wm")]
+        bd = [e for e in els if e.element_id.startswith("b")]
+        assert all(e.pdf_tag == PDFTag.ARTIFACT for e in wm), "watermarks not artifacted"
+        assert all(e.pdf_tag == PDFTag.P for e in bd), "body wrongly artifacted"
+
+    def test_single_page_vertical_not_caught(self):
+        """A one-off vertical margin element (no cross-page recurrence) is spared
+        — guards against catching a legitimate single rotated label."""
+        els = [
+            self._watermark(1, "Some Vertical Label"),
+            self._body(1), self._body(2), self._body(3),
+        ]
+        detect_artifacts(els, total_pages=3, page_heights=self.PH, page_widths=self.PW)
+        assert els[0].pdf_tag == PDFTag.P
+
+    def test_rotated_page_number_spared(self):
+        """A small rotated margin element (low aspect) repeated across pages is
+        NOT a watermark — too small to be vertical running text."""
+        els = []
+        for p in (1, 2, 3):
+            # x0=20 x1=34 (w=14), y 400..416 (h=16) -> aspect ~1.1, in margin
+            els.append(self._el(PDFTag.P, p, (20, 400, 34, 416), str(p), f"pn{p}"))
+        detect_artifacts(els, total_pages=3, page_heights=self.PH, page_widths=self.PW)
+        # may be caught by the page-number pass, but NOT by the watermark pass;
+        # assert the watermark pass alone leaves a non-page-number low-aspect
+        # margin glyph alone:
+        els2 = [self._el(PDFTag.P, p, (20, 400, 34, 416), "x", f"q{p}") for p in (1, 2, 3)]
+        from tagger.stage8_semantic.artifact_detector import _detect_margin_watermark
+        n = _detect_margin_watermark(els2, 3, self.PW, self.PH)
+        assert n == 0 and all(e.pdf_tag == PDFTag.P for e in els2)
+
+    def test_centered_body_not_caught(self):
+        """Wide, centered body text recurring across pages is never a watermark."""
+        els = [self._body(p) for p in (1, 2, 3)]
+        detect_artifacts(els, total_pages=3, page_heights=self.PH, page_widths=self.PW)
+        # The exact-match repeated-text pass may tag identical body lines, so test
+        # the watermark pass in isolation:
+        els2 = [self._body(p) for p in (1, 2, 3)]
+        from tagger.stage8_semantic.artifact_detector import _detect_margin_watermark
+        assert _detect_margin_watermark(els2, 3, self.PW, self.PH) == 0
+
+    def test_skipped_without_page_widths(self):
+        """Watermark pass is inert without page widths (no regression). Text
+        varies per page so the repeated-text pass cannot catch it either."""
+        varied = {1: "Author Manuscript Author", 2: "Manuscript Author Manuscript Author",
+                  3: "Author Manuscript"}
+        els = [self._watermark(p, varied[p]) for p in (1, 2, 3)]
+        detect_artifacts(els, total_pages=3, page_heights=self.PH)  # no widths
+        assert all(e.pdf_tag == PDFTag.P for e in els)
+
+
 class TestCaptionDetector:
     """Tests for caption detection."""
 

@@ -604,7 +604,12 @@ class AutoTaggerPipeline:
             for pn, pd in doc_data.pages.items()
             if pd.classification is not None
         }
-        detect_artifacts(all_tagged, doc_data.num_pages, page_heights)
+        page_widths = {
+            pn: pd.classification.page_width_pt * scale
+            for pn, pd in doc_data.pages.items()
+            if pd.classification is not None
+        }
+        detect_artifacts(all_tagged, doc_data.num_pages, page_heights, page_widths)
 
         # 8d: Caption detection
         detect_captions(all_tagged)
