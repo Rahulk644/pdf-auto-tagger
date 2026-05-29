@@ -90,6 +90,8 @@ Results saved to `/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal/` as 
 
 **Deploying inference changes:** `modal deploy tagger/qa/modal_inference.py`
 
+**Current production auditor = Gemma 4 E4B via vLLM (replaces the 31B above).** `tagger/qa/modal_gemma_vllm.py` serves `google/gemma-4-E4B-it` on vLLM (H100, thinking ON, temp 0.1) — the small reasoning model beats the old 31B (transformers `.generate()`) at far lower latency, and strips the thinking trace server-side. Deploy: `modal deploy tagger/qa/modal_gemma_vllm.py` (needs the `huggingface-prep` Modal secret for the gated model). HTTP contract: POST `{image_b64, prompt, max_tokens=8000, temperature=0.1, enable_thinking=true}` → `{response (clean JSON array), finish_reason, input/output_tokens, elapsed_s}`. Drive it with the prompt-v2 client `run_corpus_modal.py` (in the PREP-QA-Tool repo): one page image + one chunk of ≤20 elements per request, fan out concurrently (never batch multiple chunks — Gemma 4's heterogeneous head dims make vLLM's Triton backend JIT mid-inference and hang), parse the LAST balanced `[...]`, retry on `finish_reason=="length"` and for any omitted element id. Run: `MODAL_URL=<endpoint> PDFS_DIR=<tagged outputs> PARALLEL=10 python run_corpus_modal.py`.
+
 **Corpus:** Five test PDFs. Tagged outputs land in `output_modal/`.
 
 ### Benchmark evaluation (`tagger/benchmark/` + `scratch/run_benchmark.py`)
