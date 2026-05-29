@@ -77,6 +77,17 @@ class TextMergerConfig:
     # split into separate line elements (e.g. separate table cells).
     line_gap_multiplier: float = 3.0
 
+    # Line clustering (Pass 1): a char joins a line-cluster if its baseline is
+    # within baseline_tol_fraction * min(char_size, line_modal_size) of the
+    # line's median baseline. 0.5 keeps superscripts (observed shift ~0.38x font)
+    # while splitting stacked rows (observed leading ~1.13x font).
+    baseline_tol_fraction: float = 0.5
+
+    # Small-char attachment: a char smaller than this fraction of a neighbor
+    # line's modal size that x-continues + y-overlaps the line attaches to it
+    # regardless of baseline shift (sub/superscripts, footnote markers).
+    small_char_size_ratio: float = 0.8
+
     # Tags that should NEVER be merged across MCIDs
     # (table cells, list labels, etc.)
     no_merge_tags: frozenset[str] = field(default_factory=lambda: frozenset({

@@ -103,6 +103,10 @@ class PageElement:
     is_italic: bool = False
     """Whether the text is italic."""
 
+    upright: bool = True
+    """False for rotated/vertical glyphs (pdfplumber `upright`). Stage 2 clusters
+    rotated text separately so it never interleaves with horizontal lines."""
+
     source: Literal["pdfplumber", "mineru_ocr"] = "pdfplumber"
     """Which extraction path produced this element."""
 

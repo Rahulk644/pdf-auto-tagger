@@ -48,23 +48,12 @@ def merge_chars_to_words(
     if not chars:
         return []
 
-    # Sort by vertical position first, then horizontal
-    sorted_chars = sorted(chars, key=lambda c: (c.bbox[1], c.bbox[0]))
-
-    # Group into horizontal runs on the same line
-    lines: list[list[PageElement]] = []
-    current_line: list[PageElement] = [sorted_chars[0]]
-
-    for ch in sorted_chars[1:]:
-        prev = current_line[-1]
-        # Check vertical overlap
-        overlap = _vertical_overlap_ratio(prev.bbox, ch.bbox)
-        if overlap >= TEXT_MERGER.line_overlap_threshold:
-            current_line.append(ch)
-        else:
-            lines.append(current_line)
-            current_line = [ch]
-    lines.append(current_line)
+    # Cluster chars into visual lines by baseline. Replaces the old global-sort +
+    # prev-char vertical-overlap grouping, which merged vertically-stacked rows on
+    # dense/multi-column pages and then x-interleaved them ("Care"+"Oxford" ->
+    # "Coaf rOex"). Baseline clustering + rotation pre-separation + small-char
+    # attachment fixes that; see _cluster_lines.
+    lines = _cluster_lines(chars)
 
     # Within each line, merge adjacent chars into words
     # We detect word boundaries by looking for gaps larger than
@@ -437,6 +426,117 @@ def _union_bbox(
     x1 = max(b[2] for b in bboxes)
     y1 = max(b[3] for b in bboxes)
     return (x0, y0, x1, y1)
+
+
+def _char_size(ch: PageElement) -> float:
+    """Font size if available, else glyph height (always > 0 here)."""
+    return ch.font_size if (ch.font_size and ch.font_size > 0) else ch.height
+
+
+def _modal_size(chars: list[PageElement]) -> float:
+    """Representative font size of a line (median of member sizes)."""
+    return _median([_char_size(c) for c in chars])
+
+
+def _cluster_by_baseline(chars: list[PageElement]) -> list[dict]:
+    """Greedy baseline clustering. A char joins the existing line whose MEDIAN
+    baseline (bbox bottom) is closest within
+    ``baseline_tol_fraction * min(char_size, line_modal_size)``; else it starts a
+    new line. Median reference (not a growing union) is what stops stacked rows
+    from chaining together. Returns line dicts {chars, baselines, med, modal}.
+    """
+    frac = TEXT_MERGER.baseline_tol_fraction
+    lines: list[dict] = []
+    for ch in sorted(chars, key=lambda c: (c.bbox[3], c.bbox[0])):
+        bl = ch.bbox[3]
+        sz = _char_size(ch)
+        best = None
+        best_d = None
+        for ln in lines:
+            tol = frac * min(sz, ln["modal"])
+            d = abs(bl - ln["med"])
+            if d <= tol and (best_d is None or d < best_d):
+                best, best_d = ln, d
+        if best is None:
+            lines.append({"chars": [ch], "baselines": [bl], "med": bl, "modal": sz})
+        else:
+            best["chars"].append(ch)
+            best["baselines"].append(bl)
+            best["med"] = _median(best["baselines"])
+            best["modal"] = _modal_size(best["chars"])
+    return lines
+
+
+def _attach_small_chars(lines: list[dict]) -> list[dict]:
+    """Attach small fragment-lines (sub/superscripts, footnote markers) to the
+    adjacent main line they continue. A fragment (<= 2 chars) attaches to a main
+    line iff it is smaller than ``small_char_size_ratio`` x the line's modal size,
+    x-continues it (adjacent to the line's left or right extent within
+    ``line_gap_multiplier`` x fragment size), and y-overlaps the line's extent.
+    Tiebreak: closest median baseline; equal distance -> the line BELOW.
+    """
+    ratio = TEXT_MERGER.small_char_size_ratio
+    reach_mul = TEXT_MERGER.line_gap_multiplier
+    # A fragment is a short run (<= 2 chars, e.g. a superscript or footnote
+    # marker). Its target is ANY other line it is small RELATIVE TO (not gated by
+    # the target's char count, so short words like "Xy" can still be targets).
+    frags = [ln for ln in lines if len(ln["chars"]) <= 2]
+    attached: set[int] = set()
+
+    for fr in frags:
+        fr_sz = fr["modal"]
+        fr_x0 = min(c.bbox[0] for c in fr["chars"])
+        fr_x1 = max(c.bbox[2] for c in fr["chars"])
+        fr_top = min(c.bbox[1] for c in fr["chars"])
+        fr_bot = max(c.bbox[3] for c in fr["chars"])
+        reach = reach_mul * fr_sz
+
+        best = None
+        best_d = None
+        best_med = None
+        for ln in lines:
+            if ln is fr or id(ln) in attached:
+                continue
+            if fr_sz >= ratio * ln["modal"]:        # not small relative to target
+                continue
+            ln_x0 = min(c.bbox[0] for c in ln["chars"])
+            ln_x1 = max(c.bbox[2] for c in ln["chars"])
+            if not (abs(fr_x0 - ln_x1) <= reach or abs(fr_x1 - ln_x0) <= reach):
+                continue
+            ln_top = min(c.bbox[1] for c in ln["chars"])
+            ln_bot = max(c.bbox[3] for c in ln["chars"])
+            if min(fr_bot, ln_bot) <= max(fr_top, ln_top):  # no vertical overlap
+                continue
+            d = abs(fr["med"] - ln["med"])
+            if (best is None or d < best_d - 1e-6
+                    or (abs(d - best_d) <= 1e-6 and ln["med"] > best_med)):
+                best, best_d, best_med = ln, d, ln["med"]
+
+        if best is not None:
+            best["chars"].extend(fr["chars"])
+            best["baselines"].extend(fr["baselines"])
+            attached.add(id(fr))
+
+    return [ln for ln in lines if id(ln) not in attached]
+
+
+def _cluster_lines(chars: list[PageElement]) -> list[list[PageElement]]:
+    """Group chars into visual lines: rotated (upright=False) glyphs clustered
+    separately from horizontal text so they never interleave, baseline clustering
+    within each, then small-char attachment on the horizontal lines. Hard-asserts
+    the char-count invariant so a clustering bug can never silently drop/dup chars.
+    """
+    n = len(chars)
+    upright = [c for c in chars if getattr(c, "upright", True)]
+    rotated = [c for c in chars if not getattr(c, "upright", True)]
+
+    up_lines = _attach_small_chars(_cluster_by_baseline(upright))
+    rot_lines = _cluster_by_baseline(rotated)
+
+    lines = [ln["chars"] for ln in up_lines] + [ln["chars"] for ln in rot_lines]
+    total = sum(len(line) for line in lines)
+    assert total == n, f"char-count invariant violated: {total} != {n}"
+    return lines
 
 
 def _avg_width(elements: list[PageElement]) -> float:

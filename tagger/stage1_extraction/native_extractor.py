@@ -161,6 +161,7 @@ def _extract_page_chars(
             font_weight=font_weight,
             font_color=font_color,
             is_italic=is_italic,
+            upright=bool(ch.get("upright", True)),
             source="pdfplumber",
             confidence=1.0,
             mcid=mcid,
