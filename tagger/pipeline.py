@@ -664,6 +664,7 @@ class AutoTaggerPipeline:
         """Stage 8: Semantic refinement."""
         from tagger.stage8_semantic.heading_ranker import assign_heading_levels
         from tagger.stage8_semantic.heading_hierarchy_enforcer import enforce_heading_hierarchy
+        from tagger.stage8_semantic.pdfua_structural_enforcer import enforce_pdfua_structural
         from tagger.stage8_semantic.toc_detector import detect_toc_entries
         from tagger.stage8_semantic.artifact_detector import detect_artifacts
         from tagger.stage8_semantic.caption_detector import detect_captions
@@ -719,6 +720,13 @@ class AutoTaggerPipeline:
             by_page[el.page_num].append(el)
         for page_num, page_data in doc_data.pages.items():
             page_data.tagged_elements = by_page.get(page_num, [])
+
+        # 8f: Final PDF/UA-1 + WCAG / ACT structural cleanup — empty/punct-only
+        # P/Caption/Note -> Artifact, every Figure has /Alt, floating Caption
+        # demoted to /P. Runs after the lists pass so freshly-built /L > /LI
+        # nests have their text content before we test for emptiness.
+        all_tagged2 = [el for pd in doc_data.pages.values() for el in pd.tagged_elements]
+        enforce_pdfua_structural(all_tagged2)
 
     def _stage9_alttext(self, input_pdf: str, doc_data: DocumentData):
         """Stage 9: Alt text for figure elements. Mode = ALT_TEXT.mode (default
