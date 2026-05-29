@@ -31,6 +31,13 @@ alttext = [
     "torch>=2.2.0",
     "accelerate>=0.30.0",
 ]
+benchmark = [
+    # Local dp-bench evaluator (replicated opendataloader-bench metrics, CPU-only)
+    "rapidfuzz>=3.0.0",
+    "apted>=1.0.3",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+]
 
 [project.scripts]
 tagger = "tagger.cli:main"
