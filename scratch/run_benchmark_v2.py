@@ -31,7 +31,8 @@ app = modal.App("pdf-auto-tagger-benchmark-v2")
 out_vol = modal.Volume.from_name("pdf-auto-tagger-benchmark-v2-out", create_if_missing=True)
 
 
-@app.function(image=image, gpu="A10G", timeout=3600, volumes={"/outputs": out_vol})
+@app.function(image=image, gpu="A10G", timeout=3600, volumes={"/outputs": out_vol},
+              max_containers=10)
 def run_tagger_remotely(pdf_bytes: bytes, filename: str) -> dict:
     import sys
     sys.path.append("/root")
@@ -68,15 +69,26 @@ def main():
     out_dir = Path("/Users/rahulkhatri/Tagger/output_benchmark_v2")
     out_dir.mkdir(parents=True, exist_ok=True)
     pdfs = sorted(in_dir.glob("*.pdf"))
-    print(f"Remediation regen: {len(pdfs)} stripped failed docs -> {out_dir}")
-    for pdf_path in pdfs:
+    names = [p.name for p in pdfs]
+    payloads = [p.read_bytes() for p in pdfs]
+    print(f"Remediation regen: {len(pdfs)} stripped failed docs -> {out_dir} (fan-out)")
+    # Fan out across containers; .map() preserves input order so zip(names, ...)
+    # aligns. return_exceptions keeps one failed doc from aborting the batch.
+    for name, res in zip(
+        names,
+        run_tagger_remotely.map(
+            payloads, names, return_exceptions=True, wrap_returned_exceptions=False
+        ),
+    ):
+        if isinstance(res, Exception):
+            print(f"FAIL {name}: {res}")
+            continue
         try:
-            res = run_tagger_remotely.remote(pdf_path.read_bytes(), pdf_path.name)
             (out_dir / res["out_name"]).write_bytes(b"".join(out_vol.read_file(res["out_name"])))
             if res["report_name"]:
                 (out_dir / res["report_name"]).write_bytes(
                     b"".join(out_vol.read_file(res["report_name"]))
                 )
-            print(f"OK {pdf_path.name}")
+            print(f"OK {name}")
         except Exception as e:
-            print(f"FAIL {pdf_path.name}: {e}")
+            print(f"FAIL {name} (readback): {e}")
