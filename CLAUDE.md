@@ -69,8 +69,12 @@ Stage 4+5 content_router     — Maps Stage 2 PageElements into Stage 3 regions;
 Stage 6  consistency_validator — Rule engine; converts bad elements to Artifact
 Stage 7  cross_page_merger   — Merges elements split across page boundaries
 Stage 8  semantic refinement — Heading level ranking, TOC, artifact, caption, list
-Stage 9  alt_text_generator  — Placeholder alt text for Figure elements
-Stage 10 struct_tree_writer  — Builds PDF struct tree + injects BDC/EMC markers
+                               (artifact pass also tags repeated vertical-margin
+                               watermarks, e.g. "NIH-PA Author Manuscript")
+Stage 9  alt_text_generator  — Placeholder alt text by default; optional VLM mode
+                               (default backend Gemma-4-E4B endpoint, Qwen retained)
+Stage 10 struct_tree_writer  — Builds PDF struct tree (in READING order, not a
+                               geometric sort) + injects BDC/EMC markers
 ```
 
 ### Key data flow invariants
@@ -88,6 +92,16 @@ Stage 10 struct_tree_writer  — Builds PDF struct tree + injects BDC/EMC marker
 ### Stage 10 BDC injection (`content_stream_writer.py`)
 
 `inject_bdc_markers` rewrites the page content stream entirely. It strips all existing `BDC`/`BMC`/`EMC` operators from the original stream (to prevent phantom MCID conflicts) then injects new `BDC`/`EMC` around text operators using `char_to_mcid` — a map from Stage-1 char index → MCID built from `merged_from` lists. Characters not in `char_to_mcid` (whitespace skipped by Stage 1) fall outside any BDC block.
+
+**Reading order (do NOT re-sort by geometry):** `struct_tree_writer` builds the struct tree (`/K`) in the pipeline's incoming reading order — the `TaggedElement` list is already in MinerU region / `reading_order` sequence (content_router). A geometric `(top, left)` re-sort here interleaves the columns of multi-column docs and corrupts the assistive reading order; that bug was removed. MCID allocation is content-stream-driven (`_rewrite_stream`), so element order only affects `/K` order, not MCID numbering — the only `/K`-order-sensitive UA1 clause is 7.4.2 (heading levels), handled by `_normalize_heading_levels` re-running on the built tree.
+
+### Stage 9 alt-text VLM backend (`stage9_alttext/alt_text_generator.py`)
+
+Default is **placeholder** mode (`generate_alt_text_placeholders`) — sets a review-required `/Alt` so output is PDF/UA-valid. The optional VLM mode (`generate_alt_text_vlm`) dispatches on `ALT_TEXT.vlm_backend`:
+- `"gemma_e4b"` (default): POSTs each figure crop to the deployed Gemma-4-E4B vLLM endpoint (`$GEMMA_ALT_ENDPOINT` → the same `modal_gemma_vllm.py` server as the QA auditor). Requests fan out **concurrently** (`ALT_TEXT.gemma_parallel`, one image per request, NEVER batched — batching deadlocks Gemma's Triton JIT); parallelism comes from Modal container fan-out. Thinking defaults OFF for captioning speed.
+- `"qwen"`: loads Qwen2.5-VL-7B in-process (`generate_alt_text_qwen`), retained for the future head-to-head quality comparison.
+
+E4B-vs-Qwen alt-text **quality is not yet measured** (the alt-text quality eval is deferred); the swap is operational stack-consolidation only.
 
 ### QA evaluation (`tagger/qa/` + `scratch/run_qa_modal.py`)
 

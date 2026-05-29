@@ -16,7 +16,7 @@ It blends fast local heuristic-based parsing with heavyweight Vision-Language Mo
 6. **Structure Tree Generation:** Builds the logical XML/JSON tree.
 7. **Accessibility Checking:** Validates PDF/UA compliance requirements.
 8. **Syntax Fixing:** Cleans up the generated tags.
-9. **Alt-Text Generation (Qwen2.5-VL):** Uses a 7B VLM to generate highly descriptive alt-text for Figures and complex Tables.
+9. **Alt-Text Generation:** Placeholder alt-text by default (a valid `/Alt` flagged for review). Optional VLM mode generates real descriptions — default backend is the deployed **Gemma-4-E4B** vLLM endpoint (one model shared with the QA auditor); Qwen2.5-VL-7B is retained for a future quality comparison. Quality between the two is not yet measured.
 10. **PDF Injection:** Uses `fitz` (PyMuPDF) to physically burn the structure tree back into the final PDF.
 
 ---
@@ -27,14 +27,13 @@ Due to the massive memory footprint of PyTorch models, running the entire pipeli
 ### Modal Cloud (Heavyweight VLM)
 To solve this, the pipeline utilizes **Modal** (`run_modal.py`) to instantly spin up an **A10G GPU (24GB VRAM)** in the cloud.
 - **Serverless Scaling:** The container boots up, downloads the PyTorch tensors, processes the PDF, and instantly spins down to zero. You only pay for active inference time.
-- **Dependency Isolation:** `MinerU` (layout) and `Qwen2.5-VL` (alt-text) require `transformers >= 4.45.0`. 
+- **Dependency Isolation:** `MinerU` (layout) and the optional `Qwen2.5-VL` alt-text path require `transformers >= 4.45.0`. 
 - **Conflict Resolution:** `unimernet` (formula extraction) requires an older version of transformers (`4.42.4`). To prevent dependency hell, Modal focuses strictly on the MinerU/Qwen operations, while `unimernet` is stripped from the cloud image to ensure the layout models load properly.
 
-### Local Execution (QA Semantic Validator)
-The **PREP QA Tool** (`app_auditor.py`) is intentionally kept local. 
-- It is a lightweight Flask server that sends HTTP API requests to **Google's Gemini API** (`gemma-4-31b-it` / `gemini-1.5-pro`).
-- It does **not** host a 31B parameter model locally (which would require ~60GB VRAM). 
-- It uses a thread-pool to gracefully respect Google's 15 Requests-Per-Minute rate limit, making it highly efficient to run locally without cloud GPU overhead.
+### QA Semantic Validator (Gemma-4-E4B on Modal)
+The QA auditor evaluates tag quality against PDF/UA + WCAG rules. **Current auditor = Gemma-4-E4B served via vLLM on a Modal H100** (`tagger/qa/modal_gemma_vllm.py`, thinking ON), driven by the local prompt-v2 client (`run_corpus_modal.py`). This replaced the earlier 31B `transformers.generate()` auditor (retired — too slow, timed out).
+- Gemma-4's heterogeneous attention head dims force vLLM's Triton backend, which JIT-compiles per tensor shape and **deadlocks if two shapes are batched**. Worked around by serializing per container (`max_inputs=1`, `max_num_seqs=1`) + a startup warmup pass; parallelism comes from Modal **container fan-out** (`PARALLEL` env), not vLLM's batcher.
+- The same E4B endpoint is reused as the default Stage 9 alt-text backend (one VLM for the whole stack). Full speed playbook in project memory `project-gemma-e4b-speed`.
 
 ---
 

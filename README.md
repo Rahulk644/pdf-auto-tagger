@@ -6,7 +6,9 @@ An end-to-end Python pipeline for automatically adding semantic structural tags 
 
 We have successfully built and integrated a full **10-stage pipeline** capable of reading an untagged PDF, extracting characters, merging them into words and lines, classifying layouts (using MinerU), logically ordering the text, predicting semantic artifacts (Headers/Footers), and generating a fully valid Tagged PDF (`PyMuPDF/fitz`).
 
-The pipeline handles complex spatial heuristics to correctly merge text based on font size and line gaps, overcoming major structural fragmentation issues. We have successfully run QA validation locally using Gemma to compare pipeline outputs against manually-tagged ground truths.
+The pipeline handles complex spatial heuristics to correctly merge text based on font size and line gaps, overcoming major structural fragmentation issues.
+
+**Current state (verified):** the real pipeline produces **veraPDF PDF/UA-1-conformant output on all 5 PREP corpus docs (5/5)** — ahead of the commercial incumbent PREP (3/5) on the same deterministic standard. Output is measured on three distinct axes: **veraPDF** (ISO/PDF-UA conformance), the **PDF-Accessibility-Benchmark** (125 expert-labelled scholarly docs; we agree 90–100% with experts on the addressable structural criteria and out-agree Adobe on every comparable one), and a **Gemma-4-E4B QA auditor** (tag-quality). QA runs on Modal (vLLM/H100); tagging runs on Modal A10G (MinerU).
 
 ## 🛠️ Architecture
 
@@ -16,13 +18,12 @@ The pipeline processes documents in an immutable, declarative style where `PageE
 - **Stage 1: Native Extractor** (Character-level extraction using `pdfplumber`)
 - **Stage 2: Text Merger** (Multi-pass algorithm merging characters -> words -> lines using dynamic font-based spatial gaps)
 - **Stage 3: Layout Detector** (Deep Learning based layout detection using **MinerU** for bounding boxes and reading order)
-- **Stage 4: Content Router** (Maps perfectly-split Stage 2 text lines into Stage 3 macro bounding boxes)
-- **Stage 5: Table Extractor** (*Currently ON ICE* - Nested table structure processing)
+- **Stage 4+5: Content Router + Specialists** (Maps Stage 2 text lines into Stage 3 regions; table/figure/formula specialists produce `TaggedElement`s)
 - **Stage 6: Consistency Validator** (Rule-based safety checks, e.g., overlapping regions, font hierarchy validation)
-- **Stage 7: Reading Order** (Topological sorting of layout blocks)
-- **Stage 8: Semantic Analyzer** (Heuristic detection of Artifacts like Headers, Footers, and Pagination)
-- **Stage 9: Struct Tree Builder** (Logical parent-child tree mapping)
-- **Stage 10: PDF Writeback** (Generates standard-compliant Tagged PDF using `PyMuPDF`)
+- **Stage 7: Cross-Page Merger** (Merges elements split across page boundaries)
+- **Stage 8: Semantic Refinement** (Heading-level ranking, TOC, caption, list building, and artifact detection — running headers/footers/page-numbers plus repeated vertical-margin watermarks)
+- **Stage 9: Alt-Text Generator** (Placeholder `/Alt` by default; optional VLM mode — default backend Gemma-4-E4B, Qwen2.5-VL retained)
+- **Stage 10: Struct Tree Writeback** (Builds the `StructTreeRoot` in reading order and injects BDC/EMC marked content; `PyMuPDF`/`pikepdf`)
 
 ## ✅ What is Working
 
@@ -49,6 +50,6 @@ The pipeline processes documents in an immutable, declarative style where `PageE
 
 ## Next Steps
 
-1. **Resolve MinerU Bottlenecks**: Implement a fallback check in Stage 4 to refuse merging elements if they possess a massive horizontal gap, overriding MinerU's box.
-2. **Tackle Artifact Stubs (Path C)**: Address header/footer leakage.
-3. **Unlock Table Extraction (Priority 1)**: Move nested table extraction off the ICE and implement inner `TD`/`TH` generation.
+1. **Grid topology (Priority 1)**: invert Stage 4 to treat MinerU `LayoutRegion`s as the structural truth and pull raw text into them, producing real `TR`/`TH`/`TD` cell structure instead of over-segmented monolithic tables. Quantified by the layout-accuracy harness (token agreement vs PREP ground truth).
+2. **Multi-column / formula reading order**: the one remaining reading-order remediation failure is a dense 2-column STEM paper whose equation/affiliation pages defeat the geometric monotonicity proxy. (The gross column-interleaving and the NIH margin-watermark cases are fixed: reading-order remediation rose 40%→80%.)
+3. **Alt-text quality**: when the alt-text stage is tackled, build the quality eval and compare the Gemma-4-E4B vs Qwen2.5-VL-7B backends before locking one in.
