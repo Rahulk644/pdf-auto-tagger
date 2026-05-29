@@ -539,8 +539,14 @@ def tag_untagged_pdf(
             # (bbox, struct_elem) candidates for nesting Link annotations.
             page_struct_owners: list[tuple[tuple, object]] = []
 
-            # Sort elements by reading order
-            page_elements.sort(key=lambda e: (e.bbox[1], e.bbox[0]))
+            # Build the struct tree in the pipeline's reading order. This list
+            # is already in reading order (content_router emits TaggedElements per
+            # page in MinerU region / reading_order sequence; later stages preserve
+            # it). A geometric (top, left) re-sort here interleaved the columns of
+            # multi-column documents — e.g. a right-column body line at top=73 was
+            # placed before the title at top=81 — corrupting the assistive reading
+            # order. MCID allocation is content-stream-driven (inject_bdc_markers),
+            # so element order here only affects struct /K order, not MCIDs.
 
             # 4.1 Inject BDC markers — this allocates the page-local MCIDs.
             element_to_mcids, mcid_to_element, _mcid_tag = inject_bdc_markers(

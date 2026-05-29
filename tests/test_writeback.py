@@ -135,3 +135,55 @@ class TestStructTreeWriter:
             assert str(tabs) == "/S"
 
         pdf.close()
+
+
+def test_struct_tree_preserves_reading_order_not_geometry(tmp_path):
+    """Stage 10 must build the struct tree in the pipeline's reading order, NOT a
+    geometric (top, left) re-sort. On a 2-column page a (top, left) sort interleaves
+    the columns (a right-column line at top=90 lands before a left-column line at
+    top=100). The incoming TaggedElement list is already column-aware reading order;
+    the struct /K order must match it. Regression guard for the multi-column
+    reading-order remediation fix (struct_tree_writer line 543)."""
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(612, 792))
+    # Physical content-stream order = the canonical reading order (one Tj run each).
+    page.obj["/Contents"] = pdf.make_stream(
+        b"BT /F1 12 Tf 72 740 Td (Title) Tj ET\n"      # chars 0-4
+        b"BT 72 690 Td (LeftOne) Tj ET\n"               # chars 5-11
+        b"BT 72 640 Td (LeftTwo) Tj ET\n"               # chars 12-18
+        b"BT 320 700 Td (RightOne) Tj ET\n"             # chars 19-26
+        b"BT 320 650 Td (RightTwo) Tj ET\n"             # chars 27-34
+    )
+    input_path = tmp_path / "twocol.pdf"
+    pdf.save(str(input_path))
+    pdf.close()
+
+    def _mf(a, b):
+        return [f"p1_c{i}" for i in range(a, b)]
+
+    # bbox = (x0, y0, x1, y1) in standard top-left coords; the sort key was (y0, x0).
+    # Incoming order is column-aware: title, full LEFT column, then full RIGHT column.
+    # A (top, left) sort would instead yield Title, RightOne(70), LeftOne(100),
+    # RightTwo(140), LeftTwo(150) — interleaving the columns.
+    els = [
+        TaggedElement(element_id="title", page_num=1, pdf_tag=PDFTag.H1, text="Title",
+                      bbox=(72, 40, 300, 60), merged_from=_mf(0, 5)),
+        TaggedElement(element_id="L1", page_num=1, pdf_tag=PDFTag.P, text="LeftOne",
+                      bbox=(72, 100, 300, 120), merged_from=_mf(5, 12)),
+        TaggedElement(element_id="L2", page_num=1, pdf_tag=PDFTag.P, text="LeftTwo",
+                      bbox=(72, 150, 300, 170), merged_from=_mf(12, 19)),
+        TaggedElement(element_id="R1", page_num=1, pdf_tag=PDFTag.P, text="RightOne",
+                      bbox=(320, 70, 550, 90), merged_from=_mf(19, 27)),
+        TaggedElement(element_id="R2", page_num=1, pdf_tag=PDFTag.P, text="RightTwo",
+                      bbox=(320, 140, 550, 160), merged_from=_mf(27, 35)),
+    ]
+    out_path = tmp_path / "twocol_out.pdf"
+    tag_untagged_pdf(str(input_path), str(out_path), els, total_pages=1)
+
+    with pikepdf.open(str(out_path)) as o:
+        kids = list(o.Root.StructTreeRoot.K.K)
+        order = [str(k.get("/ActualText")) for k in kids]
+
+    assert order == ["Title", "LeftOne", "LeftTwo", "RightOne", "RightTwo"], (
+        f"struct /K not in reading order (got {order}); a geometric re-sort would "
+        f"interleave columns as Title, RightOne, LeftOne, RightTwo, LeftTwo")
