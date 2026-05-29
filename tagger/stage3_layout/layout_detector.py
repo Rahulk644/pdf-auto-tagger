@@ -236,9 +236,11 @@ class MinerULayoutDetector(LayoutModelAdapter):
         if not self._loaded:
             raise RuntimeError("Model not loaded. Call load() first.")
 
-        # In-process path
+        # In-process path. layout_detect, NOT two_step_extract: the pipeline uses
+        # only region bboxes/categories (text comes from pdfplumber), so MinerU's
+        # per-region content OCR (the bulk of two_step's cost) is pure waste here.
         if hasattr(self, "_inprocess") and self._inprocess:
-            result = self._client.two_step_extract(page_image)
+            result = self._client.layout_detect(page_image)
             return self._parse_regions(
                 self._normalize_raw(result), page_num, page_image.width, page_image.height
             )

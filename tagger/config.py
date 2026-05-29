@@ -112,7 +112,7 @@ TEXT_MERGER = TextMergerConfig()
 class LayoutConfig:
     """MinerU2.5 layout detection settings."""
 
-    model_name: str = "opendatalab/MinerU2.5-2509-1.2B"
+    model_name: str = "opendatalab/MinerU2.5-Pro-2604-1.2B"
 
     # Categories MinerU outputs (canonical names)
     categories: tuple[str, ...] = (

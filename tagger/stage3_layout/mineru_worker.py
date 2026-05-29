@@ -91,7 +91,9 @@ def main():
             try:
                 from PIL import Image
                 img = Image.open(image_path).convert("RGB")
-                result = client.two_step_extract(img)
+                # layout_detect (not two_step_extract): the pipeline uses only region
+                # bboxes/categories; MinerU's per-region content OCR is discarded.
+                result = client.layout_detect(img)
 
                 # Normalize output to a serializable list of dicts
                 regions = _normalize_result(result)
