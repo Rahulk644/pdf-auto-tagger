@@ -165,6 +165,66 @@ class AutoTaggerPipeline:
         return report
 
     # ------------------------------------------------------------------
+    # Decoupled seam (Unit 3): lets Stage 3 (MinerU) be lifted out and
+    # fanned across containers page-by-page. The CPU stages (0-2, 4-10)
+    # stay in one process per doc, so DocumentData never crosses the wire —
+    # only page images go out to the GPU pool and regions come back.
+    # run() above is unchanged and still does Stage 3 inline.
+    # ------------------------------------------------------------------
+
+    def prep_through_merge(self, input_pdf: str, doc_data: DocumentData) -> None:
+        """Stages 0-2 (CPU): classify, extract, merge. Populates doc_data.pages."""
+        classifications = self._timed("stage0", self._stage0_classify, input_pdf)
+        doc_data.num_pages = len(classifications)
+        for c in classifications:
+            doc_data.pages[c.page_num] = PageData(page_num=c.page_num, classification=c)
+        extracted = self._timed("stage1", self._stage1_extract, input_pdf, classifications)
+        for page_num, elements in extracted.items():
+            if page_num in doc_data.pages:
+                doc_data.pages[page_num].elements = elements
+        self._timed("stage2", self._stage2_merge, doc_data)
+
+    def render_layout_pages(
+        self, input_pdf: str, doc_data: DocumentData
+    ) -> tuple[list[Image.Image], list[int]]:
+        """Render native/mixed pages to images for external layout detection."""
+        imgs: list[Image.Image] = []
+        page_nums: list[int] = []
+        fitz_doc = fitz.open(input_pdf)
+        try:
+            for page_num in doc_data.pages:
+                page_idx = page_num - 1
+                if page_idx >= len(fitz_doc):
+                    continue
+                pix = fitz_doc[page_idx].get_pixmap(dpi=STANDARD_DPI)
+                imgs.append(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
+                page_nums.append(page_num)
+        finally:
+            fitz_doc.close()
+        return imgs, page_nums
+
+    def inject_layout(
+        self, input_pdf: str, doc_data: DocumentData, regions_by_page: dict
+    ) -> None:
+        """Inject externally-computed layout regions, then the pdfplumber table fallback."""
+        for page_num, regions in regions_by_page.items():
+            if page_num in doc_data.pages:
+                doc_data.pages[page_num].layout_regions = regions
+        self._pdfplumber_table_fallback(input_pdf, doc_data)
+
+    def finish_from_route(
+        self, input_pdf: str, output_pdf: str | None, doc_data: DocumentData
+    ) -> None:
+        """Stages 4-10 (CPU): route/extract, validate, cross-page, refine, alttext, write."""
+        self._timed("stage4_5", self._stage4_5_route_extract, doc_data)
+        self._timed("stage6", self._stage6_validate, doc_data)
+        self._timed("stage7", self._stage7_cross_page, doc_data)
+        self._timed("stage8", self._stage8_refine, doc_data)
+        self._timed("stage9", self._stage9_alttext, input_pdf, doc_data)
+        if output_pdf:
+            self._timed("stage10", self._stage10_write, input_pdf, output_pdf, doc_data)
+
+    # ------------------------------------------------------------------
     # Stage implementations
     # ------------------------------------------------------------------
 
