@@ -106,6 +106,49 @@ def _table_boxes(page) -> list[tuple]:
     return out
 
 
+def _box_iou(a: tuple, b: tuple) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    if inter <= 0:
+        return 0.0
+    ua = max(1e-6, (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
+    return inter / ua
+
+
+def _merge_table_boxes(pdf_path: str, page_num: int, lattice_boxes: list[tuple]) -> list[tuple]:
+    """Augment lattice tables with TATR-detected ones (borderless tables lattice can't
+    see). Dedupe by IoU > 0.5 — keep the lattice box on overlap (its bbox is tighter
+    around the ruled grid). Kept for opt-in/comparison; production uses Docling
+    detection instead (see _merge_docling_tables) because TATR's binary detection
+    over-fired catastrophically on text+heading docs (NID/MHS regressions)."""
+    from tagger.stage5_specialists.tatr_table_extractor import detect_tables
+    tatr_boxes = detect_tables(pdf_path, page_num)
+    if not tatr_boxes:
+        return lattice_boxes
+    merged = list(lattice_boxes)
+    for tb in tatr_boxes:
+        if not any(_box_iou(tb, lb) > 0.5 for lb in lattice_boxes):
+            merged.append(tb)
+    return merged
+
+
+def _merge_docling_tables(pdf_path: str, page_num: int, lattice_boxes: list[tuple]) -> list[tuple]:
+    """Augment lattice tables with Docling-layout-detected ones. Docling's layout
+    model has 17 distinct categories so heading/text regions are NEVER classified
+    as 'Table' — only genuine tables come out, no false-positives on prose. Dedupe
+    by IoU>0.5 (lattice box wins on overlap; its bbox is tighter for ruled grids)."""
+    from tagger.stage5_specialists.docling_table_extractor import detect_tables
+    docling_boxes = detect_tables(pdf_path, page_num)
+    if not docling_boxes:
+        return lattice_boxes
+    merged = list(lattice_boxes)
+    for db in docling_boxes:
+        if not any(_box_iou(db, lb) > 0.5 for lb in lattice_boxes):
+            merged.append(db)
+    return merged
+
+
 def _image_boxes(page) -> list[tuple]:
     out = []
     for im in (page.images or []):
@@ -189,6 +232,13 @@ def detect_regions(pdf_path: str, page_num: int,
         page = pdf.pages[page_num - 1]
         page_h = page.height * _SCALE
         tboxes = _table_boxes(page)
+        # Augment with Docling-detected tables (borderless: lattice misses them).
+        # Docling layout has 17 distinct classes (Text, Section-header, Table, ...),
+        # so heading/text regions get classified as themselves — NOT as "Table" —
+        # which structurally rules out the false-positive failure mode TATR has
+        # (TATR's binary table-or-not DETR cratered NID/MHS on docs 001-004/048/159).
+        # No-op when docling_ibm_models / weights are unavailable.
+        tboxes = _merge_docling_tables(pdf_path, page_num, tboxes)
         iboxes = _image_boxes(page)
         hboxes = _heading_lineboxes(page, tboxes, iboxes)  # [(bbox150, category)]
 

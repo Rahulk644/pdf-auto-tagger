@@ -108,27 +108,36 @@ def extract_table_native(
             # to the prior behavior, verified). Borderless/no-grid → TEXT unchanged.
             region_xyxy = (x0, y0, x1, y1)
             table = None
-            for strategy in ("lines", "text"):
-                cand = _find_best_table(cropped, page, region_xyxy, strategy)
-                if cand is None:
-                    continue
-                if strategy == "lines":
-                    ruled = [c for c in (cand.cells or []) if c]
-                    if not (cand.rows and len(cand.rows) >= 2 and len(ruled) >= 4):
-                        continue
-                    # Over-segmentation guard: a genuine ruled grid is mostly filled.
-                    # When lattice shatters a list / borderless block into a wide grid,
-                    # the result comes out mostly empty (dp-bench 146/149: 89% empty,
-                    # TEDS regressed). Reject and fall through to TEXT. Threshold 0.85
-                    # verified across all 42 dp-bench table docs: catches the 89%/93%
-                    # over-seg regressions while sparing the 83%-empty gain (doc 052).
-                    if _empty_cell_fraction(cand.extract()) >= 0.85:
-                        continue
-                    table = cand
-                    break
-                if _nonempty_cells(cand.extract()) >= TABLE.min_cells:
-                    table = cand
-                    break
+            # 1. Try lattice (lines strategy) for ruled grids — preferred when present.
+            cand_lines = _find_best_table(cropped, page, region_xyxy, "lines")
+            if cand_lines is not None:
+                ruled = [c for c in (cand_lines.cells or []) if c]
+                if (cand_lines.rows and len(cand_lines.rows) >= 2 and len(ruled) >= 4
+                        and _empty_cell_fraction(cand_lines.extract()) < 0.85):
+                    # Over-seg guard verified across all 42 dp-bench table docs: catches
+                    # 89%/93% over-segmentation regressions, spares the 83%-empty gain.
+                    table = cand_lines
+
+            # 2. If lattice rejected/missing, prefer Docling TableFormer (small CPU
+            # model, IBM, MIT) over the text strategy: pdfplumber's text-strategy
+            # find_tables hallucinates grids from prose on borderless pages and gives
+            # a poor result that blocks downstream model fallbacks. TableFormer is a
+            # transformer encoder-decoder trained on PubTabNet/FinTabNet — it infers
+            # SEMANTIC table structure, so borderless and complex tables work without
+            # relying on visual ruling lines (TATR's DETR failure mode). Measured on
+            # dp-bench borderless docs: beats both TATR and GPU on most (064 0.91, 117
+            # 0.51, 116 0.63 vs GPU 0.46/0.46/0.23). No-op if docling/weights missing.
+            if table is None:
+                from tagger.stage5_specialists.docling_table_extractor import extract_table
+                docling_ts = extract_table(pdf_path, page_num, region, classification)
+                if docling_ts is not None:
+                    return docling_ts
+
+            # 3. Last-resort text strategy (the historical borderless path).
+            if table is None:
+                cand_text = _find_best_table(cropped, page, region_xyxy, "text")
+                if cand_text is not None and _nonempty_cells(cand_text.extract()) >= TABLE.min_cells:
+                    table = cand_text
 
             if table is None:
                 return None
