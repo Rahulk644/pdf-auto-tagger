@@ -23,11 +23,23 @@ python -m tagger.cli serve
 # Run on Modal GPU — Miramar + Summary of Revenues only
 /Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_modal_targeted.py
 
-# Run QA evaluation (extraction local, Gemma inference on Modal H100)
-/Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_qa_modal.py
+# Run on Modal GPU — clean corpus (corpus_clean/ → output_clean/)
+/Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_clean_corpus.py
 
-# Analyze QA results across documents
+# QA evaluation (LEGACY 31B auditor — retired; prefer the E4B/vLLM path below)
+/Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_qa_modal.py
 python analyze_qa_report.py
+
+# E4B/vLLM QA auditor (CURRENT) — deploy then drive with the prompt-v2 client
+/Users/rahulkhatri/Library/Python/3.9/bin/modal deploy tagger/qa/modal_gemma_vllm.py
+MODAL_URL=<endpoint> PDFS_DIR=<tagged-output-dir> PARALLEL=10 \
+  /Users/rahulkhatri/"PREP QA Tool"/venv/bin/python "/Users/rahulkhatri/PREP QA Tool/run_corpus_modal.py" [filter]
+
+# Benchmark substrate — checker (PDF-A-B, CPU/free, all 125 docs)
+PYTHONPATH=. python scratch/run_benchmark.py <benchmark_root> [--remediation-dir DIR]
+
+# Benchmark substrate — strip+V2 remediation regen on the failed docs (Modal A10G)
+/Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_benchmark_v2.py
 
 # Run tests
 pytest
