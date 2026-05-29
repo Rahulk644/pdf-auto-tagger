@@ -240,6 +240,13 @@ def _decide_page_type(
         if image_coverage >= cfg.scanned_image_coverage:
             # High image + text → could be an OCR'd scan with text layer
             return PageType.MIXED, 0.80
+        # Sparse-text override: chars exist but density is tiny — body is in the
+        # image, only a header (or other small caption text) is in the text layer.
+        # Without this an image-of-text PDF with a tagged title would be NATIVE
+        # and OCR would never fire.
+        if (char_density < cfg.sparse_text_density
+                and image_coverage >= cfg.sparse_text_image_coverage):
+            return PageType.MIXED, 0.85
         return PageType.NATIVE, 0.85
 
     # 6. Few characters (1–50) — likely mixed or OCR with partial text

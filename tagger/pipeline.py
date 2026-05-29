@@ -341,7 +341,10 @@ class AutoTaggerPipeline:
 
         for page_num, page_data in doc_data.pages.items():
             try:
-                regions = detect_regions(input_pdf, page_num, page_data.elements)
+                page_type = page_data.classification.page_type.value \
+                    if page_data.classification is not None else "native"
+                regions = detect_regions(input_pdf, page_num, page_data.elements,
+                                         page_type=page_type)
             except Exception as e:
                 logger.warning("  Page %d: CPU layout failed (%s)", page_num, e)
                 regions = []

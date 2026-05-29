@@ -52,6 +52,14 @@ class PageClassifierConfig:
     # Pages with density below this AND some chars → mixed
     min_char_density: float = 0.001
 
+    # Char-density floor for a "real text page" — a normal text page sits around
+    # 30+ chars/sq.in.; PREP-tagged image-of-text docs with only a visible header
+    # come out at ~1-3 (e.g. the MOU appendix: 120 chars + 60% image + 1.28
+    # density). Below this with significant image coverage we override the
+    # "many chars + some images = NATIVE" path to MIXED so OCR runs on the image.
+    sparse_text_density: float = 5.0
+    sparse_text_image_coverage: float = 0.5
+
 
 PAGE_CLASSIFIER = PageClassifierConfig()
 

@@ -149,17 +149,20 @@ def _merge_docling_tables(pdf_path: str, page_num: int, lattice_boxes: list[tupl
     return merged
 
 
-def _image_boxes(page) -> list[tuple]:
+def _image_boxes(page, big_image_threshold: float = 0.7) -> list[tuple]:
+    """Image bboxes (150-DPI). Drop any image covering >= big_image_threshold of
+    the page — that's the page-spanning raster a scanned PDF embeds as page
+    background, and tagging it as a Picture would swallow every OCR text element
+    via the _center_inside blocker check. On MIXED pages we tighten the threshold
+    further (the page body is in the image, only a small visible header is text
+    — image coverage is reported around 0.5-0.6 by Stage 0)."""
     out = []
     page_area = (page.width * _SCALE) * (page.height * _SCALE)
     for im in (page.images or []):
         x0, top, x1, bottom = (im["x0"] * _SCALE, im["top"] * _SCALE,
                                im["x1"] * _SCALE, im["bottom"] * _SCALE)
         area = (x1 - x0) * (bottom - top)
-        # Skip the page-spanning raster that scanned PDFs embed as page background —
-        # treating it as a Picture would swallow every OCR text element via the
-        # _center_inside blocker check, leaving the page empty.
-        if area >= _MIN_IMAGE_AREA and area / max(page_area, 1.0) < 0.7:
+        if area >= _MIN_IMAGE_AREA and area / max(page_area, 1.0) < big_image_threshold:
             out.append((x0, top, x1, bottom))
     return out
 
@@ -229,8 +232,19 @@ def _heading_lineboxes(page, tboxes, iboxes) -> list[tuple]:
 
 
 def detect_regions(pdf_path: str, page_num: int,
-                   elements: list[PageElement]) -> list[LayoutRegion]:
-    """Produce LayoutRegion[] for one born-digital page — the MinerU-free Stage 3."""
+                   elements: list[PageElement],
+                   page_type: str = "native") -> list[LayoutRegion]:
+    """Produce LayoutRegion[] for one born-digital page — the MinerU-free Stage 3.
+
+    `page_type` is the Stage-0 classification ("native" / "mixed" / "scanned");
+    it tightens the page-spanning-image guard on mixed/scanned pages so the
+    image-of-text background is artifacted and OCR-derived text forms real
+    Text/heading regions, not a single Figure that absorbs the whole page."""
+    # MIXED/SCANNED pages: the visible body is the embedded page-image (PREP MOU
+    # ~60% coverage); drop any image >= 40% of the page so OCR PageElements
+    # aren't _center_inside-blocked. NATIVE pages keep the looser 70% threshold
+    # so a large legitimate figure on a paper is still tagged as Picture.
+    big_image_thr = 0.4 if page_type in ("mixed", "scanned") else 0.7
     with pdfplumber.open(pdf_path) as pdf:
         if page_num > len(pdf.pages):
             return []
@@ -244,7 +258,7 @@ def detect_regions(pdf_path: str, page_num: int,
         # (TATR's binary table-or-not DETR cratered NID/MHS on docs 001-004/048/159).
         # No-op when docling_ibm_models / weights are unavailable.
         tboxes = _merge_docling_tables(pdf_path, page_num, tboxes)
-        iboxes = _image_boxes(page)
+        iboxes = _image_boxes(page, big_image_threshold=big_image_thr)
         hboxes = _heading_lineboxes(page, tboxes, iboxes)  # [(bbox150, category)]
 
     # headings come from the pdfplumber-line path; exclude their elements from body
