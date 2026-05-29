@@ -114,10 +114,18 @@ def extract_table_native(
                     continue
                 if strategy == "lines":
                     ruled = [c for c in (cand.cells or []) if c]
-                    if cand.rows and len(cand.rows) >= 2 and len(ruled) >= 4:
-                        table = cand
-                        break
-                    continue
+                    if not (cand.rows and len(cand.rows) >= 2 and len(ruled) >= 4):
+                        continue
+                    # Over-segmentation guard: a genuine ruled grid is mostly filled.
+                    # When lattice shatters a list / borderless block into a wide grid,
+                    # the result comes out mostly empty (dp-bench 146/149: 89% empty,
+                    # TEDS regressed). Reject and fall through to TEXT. Threshold 0.85
+                    # verified across all 42 dp-bench table docs: catches the 89%/93%
+                    # over-seg regressions while sparing the 83%-empty gain (doc 052).
+                    if _empty_cell_fraction(cand.extract()) >= 0.85:
+                        continue
+                    table = cand
+                    break
                 if _nonempty_cells(cand.extract()) >= TABLE.min_cells:
                     table = cand
                     break
@@ -294,22 +302,44 @@ def _nonempty_cells(rows) -> int:
     return sum(1 for r in (rows or []) for c in r if c is not None and str(c).strip())
 
 
+def _empty_cell_fraction(rows) -> float:
+    """Fraction of empty cells in an extracted grid — the over-segmentation signal.
+    A genuine ruled grid is mostly populated; a list/borderless block shattered into a
+    wide grid is mostly empty. Returns 0.0 when there are no cells at all."""
+    cells = [c for r in (rows or []) for c in r]
+    if not cells:
+        return 0.0
+    empty = sum(1 for c in cells if c is None or not str(c).strip())
+    return empty / len(cells)
+
+
 def _find_best_table(cropped, page, region_xyxy, strategy: str):
     """Find a table under one pdfplumber strategy ("lines" or "text").
 
-    Prefer a table within the cropped region; else pick the full-page table with
-    the largest overlap against the region. Returns a pdfplumber Table or None.
+    Prefer the FULL-PAGE table that best overlaps the region: cropping to the region
+    cuts the ruling lines at the crop edge and collapses a multi-column grid to one
+    column (dp-bench 052: pdfplumber extracts 12x4 on the full page but 12x1 on the
+    crop). Full-page find preserves the grid; we just select the table overlapping the
+    region. Falls back to the cropped find only if no full-page table overlaps.
+
+    NB: region_xyxy is 150-DPI standard; pdfplumber t.bbox is 72-DPI native — convert
+    before computing overlap (the old code compared mismatched spaces, so this
+    full-page path almost never fired and the degenerate cropped table won).
     """
+    from tagger.config import PDF_NATIVE_DPI, STANDARD_DPI
+    inv = PDF_NATIVE_DPI / STANDARD_DPI
+    region_72 = (region_xyxy[0] * inv, region_xyxy[1] * inv,
+                 region_xyxy[2] * inv, region_xyxy[3] * inv)
     ts = {"vertical_strategy": strategy, "horizontal_strategy": strategy}
-    found = cropped.find_tables(table_settings=ts)
-    if found:
-        return found[0]
     best, best_overlap = None, 0.0
     for t in page.find_tables(table_settings=ts):
-        overlap = _compute_overlap_area(region_xyxy, t.bbox)
+        overlap = _compute_overlap_area(region_72, t.bbox)
         if overlap > best_overlap:
             best, best_overlap = t, overlap
-    return best
+    if best is not None:
+        return best
+    found = cropped.find_tables(table_settings=ts)
+    return found[0] if found else None
 
 
 def _compute_overlap_area(

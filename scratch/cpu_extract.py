@@ -102,6 +102,11 @@ def _tables(page, lattice_only=True):
                 ruled = [c for c in (t.cells or []) if c]
                 if not (t.rows and len(t.rows) >= 2 and len(ruled) >= 4):
                     continue
+                # over-segmentation guard: reject a lattice grid that is >=85% empty
+                # (a shattered list/borderless block), same as Stage-5 table_extractor.
+                allc = [c for r in rows for c in r]
+                if allc and sum(1 for c in allc if not (c and str(c).strip())) / len(allc) >= 0.85:
+                    continue
             elif ncells < 4:
                 continue
             html = "<table>" + "".join(
