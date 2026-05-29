@@ -61,6 +61,7 @@ def derive_verdict(pdf_path: str, criterion: str) -> Verdict:
         logical_reading_order,
         semantic_tagging,
         table_structure,
+        unicode_mapping,
     )
 
     dispatch = {
@@ -71,9 +72,10 @@ def derive_verdict(pdf_path: str, criterion: str) -> Verdict:
         # alt_text_quality PRIMARY = deterministic presence (5a); the Gemma quality
         # sub-axis (5b) is reported separately via gemma_quality, not here.
         "alt_text_quality": alt_text.verdict,
-        # font_embedding = adjacent axis (NOT the benchmark's fonts_readability,
-        # which is not-addressed -> MissingFeature below).
+        # font_embedding + unicode_mapping = adjacent FILE-CONFORMANCE axes (NOT
+        # benchmark-labeled criteria); surfaced as their own scorecard columns.
         "font_embedding": font_embedding.verdict,
+        "unicode_mapping": unicode_mapping.verdict,
     }
     fn = dispatch.get(criterion)
     if fn is None:
