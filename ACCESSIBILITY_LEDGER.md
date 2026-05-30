@@ -71,7 +71,7 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 | Type | recall | docs covered | read |
 |---|---|---|---|
 | **Headings** | **0.72** | 48/51 | healthy — matches independent MHS 0.726; the corrected harness is trustworthy |
-| **Figure** | **0.52** | 33/52 | **#2 gap** — we miss figures entirely on ~19 docs + undercount |
+| **Figure** | 0.52 *(vs incumbent)* | 33/52 | **investigated → not a real gap**: our count tracks actual source images; incumbent over-counts IMG (repeated logos/inline) + tags phantom/vector. Surplus → Artifact correctly |
 | **Link** | **0.06 → addressed** | 2/18 → fix shipped | was #1 gap (we tagged existing annots only); **auto-detection now synthesizes /Link for bare URL/email text** |
 | **Form** | metric artifact | — | scorecard counts *source* widgets not our output; `/Form` producer verified directly (217/217) |
 | P | granularity-noisy | — | we merge lines→blocks; content captured (3,586 P + 24,402 table-cells vs 67,223 incumbent line-Ps), not a coverage gap |
@@ -96,7 +96,7 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 ### NOW (shipped, in production)
 P, H1–H6, L/LI/Lbl/LBody, Table/TR/TH/TD, Figure, Formula (+MathML /AF, opt-in image→LaTeX), Caption, Link (existing annots, OBJR), **Form (widgets → /Form + OBJR + /TU-from-fieldname)**, Artifact (headers/footers/page-#s/margin-watermarks), Lang + Title metadata. Pre-tagged docs retagged safely.
 
-### SHIPPED THIS SESSION (uncommitted on disk)
+### SHIPPED THIS SESSION (committed: 5c15fa6, f1f5b76)
 - ✅ `/Form` producer for widget annotations (`_tag_widget_annotations`) — `/Form`+OBJR+`/TU`-from-fieldname; 217/217 on test doc 389, audit 3→0, integrity clean, unit-tested.
 - ✅ **Link auto-detection** (`_autodetect_link_annotations`) — whole-token regex finds bare URL/email text with no covering annotation → synthesizes a functional `/Link` `Annot` (`/A /URI`), which existing `_tag_link_annotations` wraps into `/Link` struct + OBJR + `/Contents`. Verified: doc 1396 → 29 links, doc 1114 → 21 (incl `mailto:`), audit 3→0, integrity clean, unit-tested. **Known wart:** line-wrapped URLs truncate (→ deferred compound-link merge). Suite 303→**305**.
 - ✅ Convention-free coverage scorecard harness (`scratch/prep_baseline/`) — 80-doc run complete.
