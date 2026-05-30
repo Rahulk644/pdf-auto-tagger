@@ -427,8 +427,10 @@ class AltTextConfig:
     # captioning we default OFF for speed and revisit ON in the deferred quality A/B.
     gemma_enable_thinking: bool = False
 
-    # Maximum tokens for alt text output
-    max_output_tokens: int = 150
+    # Maximum tokens for alt text output. The rubric caps SHORT alt at 150 CHARS
+    # (~38 tokens), so cap generation near that — 150 tokens (~600 chars) let the VLM
+    # run past the short-alt limit (the too_long violations the scoreboard found).
+    max_output_tokens: int = 44
 
     # Temperature for alt text generation
     temperature: float = 0.3
