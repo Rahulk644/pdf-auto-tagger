@@ -1,52 +1,137 @@
 # Auto-Tagger Architecture & Technical Blueprint
 
-This document serves as the comprehensive technical foundation for the Auto-Tagger project, detailing the pipeline architecture, the hybrid local/cloud deployment strategy, and the current known limitations (specifically the Stage 4 structural mapping flaw).
+Comprehensive technical foundation: the pipeline shape, the two interchangeable layout backends (CPU-native default + legacy MinerU GPU), the Stage-8 conformance enforcers, and the read-only audit layer.
 
-## 1. System Overview
-The Auto-Tagger is a 10-stage intelligent pipeline designed to ingest raw, unstructured PDF documents and output highly structured, accessible PDFs (containing H1/H2 tags, Tables, Figures, and Alt-Text). 
+## 1. System overview
 
-It blends fast local heuristic-based parsing with heavyweight Vision-Language Models (VLMs) to tackle complex visual layouts (like financial tables and scientific formulas).
+The Auto-Tagger is a 10-stage pipeline that ingests an untagged or poorly tagged PDF and outputs a PDF/UA-1-conformant tagged PDF (H1–H6, P, L > LI > Lbl + LBody, Figure with /Alt, Table with TR > TH/TD, Caption colocated, page furniture artifacted).
 
-### The 10-Stage Pipeline
-1. **Sanitization:** Cleans metadata and sanitizes the PDF.
-2. **Text Extraction:** Uses `pdfminer` to extract raw text blocks, reading order, and font sizes.
-3. **Layout Detection (MinerU):** Visual geometric tracing of elements (Tables, Figures, Titles, Footnotes).
-4. **Text Routing (The Mapping Phase):** Maps raw text snippets (Stage 2) to the layout bounding boxes (Stage 3).
-5. **Specialists:** Deep-dives into specific elements (e.g., uses `unimernet` to extract LaTeX from formulas).
-6. **Structure Tree Generation:** Builds the logical XML/JSON tree.
-7. **Accessibility Checking:** Validates PDF/UA compliance requirements.
-8. **Syntax Fixing:** Cleans up the generated tags.
-9. **Alt-Text Generation:** Placeholder alt-text by default (a valid `/Alt` flagged for review). Optional VLM mode generates real descriptions — default backend is the deployed **Gemma-4-E4B** vLLM endpoint (one model shared with the QA auditor); Qwen2.5-VL-7B is retained for a future quality comparison. Quality between the two is not yet measured.
-10. **PDF Injection:** Uses `fitz` (PyMuPDF) to physically burn the structure tree back into the final PDF.
+It runs in two interchangeable layout backends, selected by `LAYOUT.backend` (env: `TAGGER_LAYOUT_BACKEND`):
 
----
+- **`cpu` (default for local + CI):** Docling Heron (RT-DETRv2, MIT) for region detection, Docling TableFormer (MIT) for table structure, SigLIP (Apache 2.0) zero-shot for figure-type classification, RapidOCR PP-OCRv4 ONNX (Apache 2.0) for scanned-page OCR. No MinerU. No AGPL. Runs locally on M1 in ~2.2 s/doc.
+- **`mineru` (legacy GPU on Modal):** MinerU2.5-Pro on Modal A10G. Retained for the throughput / Modal-fleet story (see `THROUGHPUT_ARCHITECTURE.md`) and dp-bench baseline comparisons.
 
-## 2. Infrastructure: The Hybrid Cloud Strategy
-Due to the massive memory footprint of PyTorch models, running the entire pipeline locally on machines with limited unified memory (e.g., M1 Mac with 8GB RAM) results in Out-Of-Memory (OOM) crashes or severe CPU swap bottlenecks.
+### The 10-stage pipeline
 
-### Modal Cloud (Heavyweight VLM)
-To solve this, the pipeline utilizes **Modal** (`run_modal.py`) to instantly spin up an **A10G GPU (24GB VRAM)** in the cloud.
-- **Serverless Scaling:** The container boots up, downloads the PyTorch tensors, processes the PDF, and instantly spins down to zero. You only pay for active inference time.
-- **Dependency Isolation:** `MinerU` (layout) and the optional `Qwen2.5-VL` alt-text path require `transformers >= 4.45.0`. 
-- **Conflict Resolution:** `unimernet` (formula extraction) requires an older version of transformers (`4.42.4`). To prevent dependency hell, Modal focuses strictly on the MinerU/Qwen operations, while `unimernet` is stripped from the cloud image to ensure the layout models load properly.
+```
+0  Page classifier         Native / scanned / mixed / corrupt (with sparse-text-
+                           density override for image-of-text docs)
+1a Native extractor        pdfplumber chars on born-digital pages
+1b Scanned extractor       RapidOCR PP-OCRv4 on scanned / mixed pages
+2  Text merger             chars → words → line elements
+3  Layout detector         Pluggable adapter (CPU-native Heron + TableFormer
+                           default; MinerU on Modal as a fallback)
+4+5 Router + specialists   Map PageElements into regions; specialists (Docling
+                           TableFormer for tables, figure, formula) produce
+                           TaggedElements
+6  Consistency validator   Rule engine, deterministic safety checks
+7  Cross-page merger       Splits/joins elements spanning page boundaries
+8a Heading ranker          H1–H6 from font-tier rarity
+8a' Heading-hierarchy enforcer  PDF/UA-1 7.4.2 — no level skips, first heading
+                           is H1, empty/punct-only → /Artifact
+8b TOC detector
+8c Artifact detector       Running headers/footers, page numbers, repeated
+                           margin watermarks
+8d Caption detector
+8e List builder            L > LI > Lbl + LBody
+8f PDF/UA structural enforcer  Empty/punct-only body → /Artifact, every Figure
+                           has /Alt, floating Caption → /P
+9  Alt-text generator      SigLIP buckets + McGraw-Hill templates with
+                           caption-aware suffix logic; decorative figures →
+                           /Artifact (PDF4 / H67); placeholder + VLM modes
+                           retained
+10 Struct tree writeback   Builds StructTreeRoot in reading order; font-aware
+                           glyph counting for the BDC/EMC injection
+```
 
-### QA Semantic Validator (Gemma-4-E4B on Modal)
-The QA auditor evaluates tag quality against PDF/UA + WCAG rules. **Current auditor = Gemma-4-E4B served via vLLM on a Modal H100** (`tagger/qa/modal_gemma_vllm.py`, thinking ON), driven by the local prompt-v2 client (`run_corpus_modal.py`). This replaced the earlier 31B `transformers.generate()` auditor (retired — too slow, timed out).
-- Gemma-4's heterogeneous attention head dims force vLLM's Triton backend, which JIT-compiles per tensor shape and **deadlocks if two shapes are batched**. Worked around by serializing per container (`max_inputs=1`, `max_num_seqs=1`) + a startup warmup pass; parallelism comes from Modal **container fan-out** (`PARALLEL` env), not vLLM's batcher.
-- The same E4B endpoint is reused as the default Stage 9 alt-text backend (one VLM for the whole stack). Full speed playbook in project memory `project-gemma-e4b-speed`.
+### Read-only conformance audit layer (`tagger/audit/`)
 
----
+Separate from the tagging pipeline. Takes any tagged PDF (ours, PREP, PDFix, anything) and reports per-rule pass / fail / N/A for the eight rules we explicitly cover:
 
-## 3. The Critical Flaw: The Stage 4 Mapping Bug
-Through A/B testing the Text-Only Fallback vs. the MinerU VLM on complex documents (e.g., *Summary of Revenues and Expenditures.pdf*), we discovered that the QA error rates were practically identical (~34%). 
+```
+ACT-6cfa84   /  WCAG 1.1.1   Figure has /Alt or /ActualText
+ACT-36b590   /  WCAG 1.3.1   Heading is non-empty
+ACT-b40fd1   /  WCAG 3.1.1   /Lang valid BCP-47 tag
+PDFUA-7.4.2  /  WCAG 1.3.1   No heading-level skips
+PDFUA-7.1-10 /  WCAG 2.4.2   /Info /Title + /DisplayDocTitle = true
+PDFUA-7.5.2  /  WCAG 1.3.1   /Caption colocates with /Figure or /Table
+PDFUA-7.5.3  /  WCAG 1.3.1   /LI inside /L
+PDFUA-7.1-1                  /MarkInfo /Marked = true
+```
 
-This exposed a critical structural bug in **Stage 4** of `pipeline.py`.
+CLI: `python -m tagger.audit.act_rules <pdf> [...]` — per-doc summary; `--json` for the raw aggregate. Used in the audit-batch comparison to validate that the in-pipeline Stage-8 enforcers catch what they're supposed to.
 
-### The Problem
-1. In Stage 2, `pdfminer` rips raw text from the page. It does not understand tables, so it shatters a financial table into 50+ tiny, disconnected text snippets.
-2. In Stage 3, the `MinerU` VLM successfully analyzes the page visually and draws **one cohesive bounding box** around the entire table.
-3. **The Bug:** Stage 4 iterates over the 50 broken `pdfminer` snippets as the ultimate source of truth. It simply looks at the MinerU bounding boxes to "steal" a label. Consequently, it creates 50 tiny, disconnected `Table` elements instead of merging the text into the single, beautiful Table region MinerU created.
+## 2. Infrastructure
 
-### The Solution (Next Steps)
-To unlock the true power of the VLM, **Stage 4 must be inverted.** 
-The pipeline must treat the `LayoutRegions` generated by MinerU as the definitive structural boundaries. It should iterate over the MinerU boxes first, and then capture/merge any raw text snippets that fall *inside* those boundaries into a single unified `TaggedElement`.
+### CPU-native (default)
+
+Everything runs locally on M1 / commodity CPU. No GPU, no Modal, no AGPL deps. The whole `.venv3` is ~1.3 GB including torch + transformers + Docling + RapidOCR. ~2.2 s/doc on dp-bench. Test suite (266 passing) runs in under 30 s.
+
+### Modal (legacy MinerU layout + production QA auditor)
+
+Modal is still used for two things even in a CPU-first deployment:
+
+- **Layout-only legacy path** (`run_modal.py`): swap to `TAGGER_LAYOUT_BACKEND=mineru` and route Stage 3 to MinerU on A10G if you specifically need the MinerU output for comparison or for a workflow that already standardized on it.
+- **QA semantic validator** (Gemma-4-E4B on Modal H100, `tagger/qa/modal_gemma_vllm.py`): a separate eval-time service that scores tag quality against PDF/UA + WCAG rules. The pipeline output is what's evaluated; the QA layer doesn't change the tagging output.
+
+The same E4B endpoint is reused as the optional Stage 9 alt-text backend (`ALT_TEXT.mode = "vlm"`) when a GPU is available and richer chart/diagram descriptions are wanted.
+
+## 3. Headline measured numbers
+
+**dp-bench (200 docs, CPU backend, no GPU, ~2.2 s/doc):**
+
+| metric | CPU pipeline | GPU pipeline (MinerU + V2 fixes) | Δ vs GPU |
+|---|---|---|---|
+| overall | **0.823** | 0.802 | **+0.022** |
+| NID (reading order) | **0.888** | 0.874 | +0.014 |
+| TEDS (tables) | **0.581** | 0.429 | **+0.152** |
+| MHS (headings) | **0.720** | 0.716 | +0.005 |
+
+**Audit batch (14 real-world tagged PDFs):**
+
+| validator | OURS | PREP | PDFix |
+|---|---|---|---|
+| veraPDF UA-1 compliant | **9/14** | 6/14 | 9/14 |
+| W3C ACT pass / fail / N/A | **84 / 0 / 28** | 84 / **2** / 26 | 77 / **3** / 32 |
+
+The CPU pipeline beats GPU on every dp-bench metric and is the only one of the three with zero ACT-rule failures across the audit batch — the Stage-8 enforcers catch exactly the failure modes PREP and PDFix exhibit.
+
+## 4. Architecture notes
+
+### Pluggable layout backend (Stage 3)
+
+Stage 3 is selected by `LAYOUT.backend` in `tagger/config.py` (env `TAGGER_LAYOUT_BACKEND`). The default is `cpu` for local work; `mineru` is the legacy GPU path. Both backends produce the same `LayoutRegion[]` interface, so Stages 4–10 are agnostic.
+
+### CPU layout detector branches on Stage-0 classification
+
+`cpu_layout_detector.detect_regions(pdf_path, page_num, elements, page_type)` branches:
+
+- **NATIVE pages** — pdfplumber primitives (lattice tables, text-line heading detection, image bboxes), augmented with Heron-detected tables (`_merge_docling_tables`) and Heron-detected semantic headings (`_merge_docling_headings`, UNION-only — never removes a pdfplumber heading, so TEDS/NID can't structurally regress; this is what closed the MHS gap to GPU).
+- **MIXED / SCANNED pages** — Heron is the entire region source via `_detect_via_heron`. Page-spanning images (≥40% of page) are dropped — that's the scan background, not a real Picture, and would otherwise `_center_inside`-block every OCR PageElement.
+
+### Stage 1 split: native vs scanned
+
+Stage 1 is two co-routines that run in parallel and merge their results by page number:
+
+- `native_extractor` — pdfplumber chars (zero on a scanned page).
+- `scanned_extractor` — RapidOCR PP-OCRv4 ONNX on SCANNED / MIXED pages. PageElements get `source = "rapidocr"` and IDs `p{N}_o{idx}` so Stage 4 can route them differently from native chars when needed.
+
+### Stage 8 conformance enforcers
+
+Two new deterministic enforcers run inside Stage 8 after the existing semantic passes:
+
+- `heading_hierarchy_enforcer` — PDF/UA-1 7.4.2: no level skips (H1 → H3 collapses to H1 → H2), first heading = H1, empty heading → /Artifact, punctuation-only heading → /Artifact. R3 + R4 run before R1 + R2 so an empty H2 between H1 and H3 doesn't falsely look like a present-but-skipped H2.
+- `pdfua_structural_enforcer` — S1: empty body element (/P, /Caption, /Note, /BlockQuote) → /Artifact. S2: punctuation-only body → /Artifact. S3: every surviving Figure gets a placeholder /Alt + needs_review flag (belt-and-braces). S4: floating /Caption (no adjacent /Figure or /Table on the same page within 80 px) → /P.
+
+Both enforcers return a stats dict so the pipeline can log what was changed and tests can assert on it. 14 unit tests cover R1–R4 + S1–S4.
+
+### Stage 10 font-aware glyph counting
+
+The content-stream rewriter's positional counter (`current_char_idx` in `_rewrite_stream`) advances by `len(bytes(operand)) // bytes_per_code`. `bytes_per_code` is resolved from the current `Tf` operator's font subtype — Type0 = 2, simple = 1. Using `len(str(operand))` instead (the previous behavior) over-counts on Type0 fonts and desyncs the entire char↔glyph mapping for that page; the table data falls to `/Artifact`, screen readers miss it, veraPDF still passes. The fix recovered substantial table content on Type0-font pages and is one of the reasons the CPU pipeline now beats GPU on TEDS.
+
+## 5. What's parked
+
+- **PDF/UA-2 MathML for formulas** — formula recognizer (pix2tex / LaTeX-OCR / similar small CPU model) → LaTeX → MathML emitter → embed as PDF 2.0 Associated File. Substantial new unit; same shape as the Docling-TableFormer integration but for formulas.
+- **Color contrast (WCAG 1.4.3)** — handled in a separate repo per user direction.
+- **Per-doc QA reports** of the audit batch (PAC reports exist; we read veraPDF + ACT; the PAC report's human judgment is the third axis we haven't programmatically ingested).
+</content>

@@ -1,55 +1,133 @@
 # Auto-Tagger PDF Pipeline
 
-An end-to-end Python pipeline for automatically adding semantic structural tags to untagged or poorly tagged PDFs, targeting accessibility standards (PDF/UA) and semantic QA compliance.
+An end-to-end Python pipeline for automatically adding semantic structural tags to untagged or poorly tagged PDFs, targeting accessibility standards (PDF/UA-1) and the W3C Accessibility Conformance Testing (ACT) rules.
 
-## 🚀 Where We Stand
+## 🚀 Where we stand
 
-We have successfully built and integrated a full **10-stage pipeline** capable of reading an untagged PDF, extracting characters, merging them into words and lines, classifying layouts (using MinerU), logically ordering the text, predicting semantic artifacts (Headers/Footers), and generating a fully valid Tagged PDF (`PyMuPDF/fitz`).
+The pipeline runs in two interchangeable layout backends, selected by `TAGGER_LAYOUT_BACKEND` or `LAYOUT.backend` in `tagger/config.py`:
 
-The pipeline handles complex spatial heuristics to correctly merge text based on font size and line gaps, overcoming major structural fragmentation issues.
+- **`cpu` (CPU-native, default for local work):** Docling Heron (RT-DETRv2 layout, MIT) for region classification, Docling TableFormer (MIT) for table structure, SigLIP zero-shot for figure-type classification, RapidOCR PP-OCRv4 ONNX for scanned-page OCR. **No MinerU, no AGPL anywhere.**
+- **`mineru` (GPU on Modal):** the original MinerU2.5-Pro layout path retained for the throughput / Modal-fleet story.
 
-**Current state (verified):** the real pipeline produces **veraPDF PDF/UA-1-conformant output on all 5 PREP corpus docs (5/5)** — ahead of the commercial incumbent PREP (3/5) on the same deterministic standard. Output is measured on three distinct axes: **veraPDF** (ISO/PDF-UA conformance), the **PDF-Accessibility-Benchmark** (125 expert-labelled scholarly docs; we agree 90–100% with experts on the addressable structural criteria and out-agree Adobe on every comparable one), and a **Gemma-4-E4B QA auditor** (tag-quality). QA runs on Modal (vLLM/H100); tagging runs on Modal A10G (MinerU).
+### Measured headline numbers
+
+**dp-bench (200 docs, native, CPU backend, no GPU):**
+
+| metric | CPU pipeline | GPU pipeline (MinerU + V2 fixes) | Δ vs GPU |
+|---|---|---|---|
+| overall | **0.823** | 0.802 | **+0.022** |
+| NID (reading order) | **0.888** | 0.874 | +0.014 |
+| TEDS (tables) | **0.581** | 0.429 | **+0.152** |
+| MHS (headings) | **0.720** | 0.716 | +0.005 |
+
+The CPU pipeline now beats the GPU pipeline on every dp-bench metric at ~2.2 s/doc.
+
+**Audit batch (14 real-world tagged PDFs, vs PREP and PDFix):**
+
+| validator | OURS | PREP | PDFix |
+|---|---|---|---|
+| **veraPDF UA-1 compliant** | **9/14** | 6/14 | 9/14 |
+| **W3C ACT pass / fail / N/A** (8 rules × 14 docs) | **84 / 0 / 28** | 84 / **2** / 26 | 77 / **3** / 32 |
+
+We are the only one of the three with **zero** ACT-rule failures across the audit batch. PREP fails 1 heading-skip + 1 empty-heading; PDFix fails 3 empty-headings — all caught by our Stage-8 enforcers.
 
 ## 🛠️ Architecture
 
-The pipeline processes documents in an immutable, declarative style where `PageElement` objects flow through these stages:
+The pipeline processes documents in an immutable, declarative style where `PageElement` objects flow through ten stages, then a struct-tree writer:
 
-- **Stage 0: Page Classifier** (Native PDF vs Image/Scanned detection)
-- **Stage 1: Native Extractor** (Character-level extraction using `pdfplumber`)
-- **Stage 2: Text Merger** (Multi-pass algorithm merging characters -> words -> lines using dynamic font-based spatial gaps)
-- **Stage 3: Layout Detector** (Deep Learning based layout detection using **MinerU** for bounding boxes and reading order)
-- **Stage 4+5: Content Router + Specialists** (Maps Stage 2 text lines into Stage 3 regions; table/figure/formula specialists produce `TaggedElement`s)
-- **Stage 6: Consistency Validator** (Rule-based safety checks, e.g., overlapping regions, font hierarchy validation)
-- **Stage 7: Cross-Page Merger** (Merges elements split across page boundaries)
-- **Stage 8: Semantic Refinement** (Heading-level ranking, TOC, caption, list building, and artifact detection — running headers/footers/page-numbers plus repeated vertical-margin watermarks)
-- **Stage 9: Alt-Text Generator** (Placeholder `/Alt` by default; optional VLM mode — default backend Gemma-4-E4B, Qwen2.5-VL retained)
-- **Stage 10: Struct Tree Writeback** (Builds the `StructTreeRoot` in reading order and injects BDC/EMC marked content; `PyMuPDF`/`pikepdf`)
+```
+Stage 0  page_classifier      Native vs scanned vs mixed vs corrupt
+                              (sparse-text-density override catches image-of-text
+                              docs where PREP injected a header-only text layer)
+Stage 1a native_extractor     pdfplumber char-level extraction (born-digital)
+Stage 1b scanned_extractor    RapidOCR (PP-OCRv4 ONNX) on scanned / mixed pages
+Stage 2   text_merger          chars → words → line elements
+Stage 3   layout_detector      pluggable LayoutModelAdapter:
+                              - cpu_layout_detector: Heron + TableFormer + lattice
+                                + heading-on-pdfplumber-lines + Heron-additive
+                                semantic headings on native pages
+                              - MinerU on Modal (legacy GPU path)
+Stage 4+5 content_router       Maps PageElements into regions; specialists
+          + specialists        produce TaggedElements (Docling TableFormer for
+                              borderless tables — beats GPU on TEDS)
+Stage 6   consistency_validator Rule engine; converts bad elements to Artifact
+Stage 7   cross_page_merger    Merges elements split across page boundaries
+Stage 8a  heading_ranker       H1–H6 assignment by font-tier rarity
+Stage 8a' heading_hierarchy_enforcer  PDF/UA-1 7.4.2 (no skip), first-H1,
+                              no empty/punct-only headings
+Stage 8b  toc_detector
+Stage 8c  artifact_detector    page numbers, repeated margin furniture, watermarks
+Stage 8d  caption_detector
+Stage 8e  list_builder         L > LI > Lbl + LBody nesting
+Stage 8f  pdfua_structural_enforcer  empty/punct-only body → Artifact, every
+                              Figure has /Alt, floating Caption → P
+Stage 9   alt_text_generator   mode = "siglip" (default) | "placeholder" | "vlm"
+                              — SigLIP zero-shot buckets + McGraw-Hill templates
+                              with caption-aware suffix logic
+Stage 10  struct_tree_writer   builds StructTreeRoot, injects BDC/EMC marked
+                              content, font-aware glyph counting (Type0 = 2-byte)
+```
 
-## ✅ What is Working
+The whole pipeline is **CPU-only by default** and runs locally in ~2.2 s/doc on M1, no MinerU spawned. The full test suite (266 passing + 3 skipped) runs locally in under 30 s.
 
-1. **Precision Text Extraction**: The baseline `pdfplumber` character extraction successfully maps bounding boxes, font metadata (bold/italic), and color data (resolving early grayscale inversion bugs).
-2. **Spatial Merging (Stage 2)**: Dynamic horizontal and vertical gap calculation based on `avg_char_width` works flawlessly. Modifying `word_gap_multiplier = 1.0` and `line_gap_multiplier = 3.0` ensures multi-column financial tables don't accidentally fuse "Row Header" and "$1,000,000" into a single string.
-3. **Infinite Loop Protections (Stage 6)**: Optimized `OverlappingRegionRule` down to page-local `O(N_p^2)` to prevent validation hangs.
-4. **Output Generation (Stage 10)**: The `PyMuPDF` write-back layer correctly injects the semantic tree (`StructTreeRoot`) and outputs valid, compliant PDFs.
+## 🧪 Conformance audit module (`tagger/audit/`)
 
-## ❌ What is NOT Working (Or Paused)
+A read-only checker layer that scores any tagged PDF (ours, PREP, PDFix, anything) against the eight rules our pipeline cares about:
 
-1. **Nested Table Generation**: Currently paused (`ON ICE`). Our pipeline wraps entire tables inside a single, monolithic `<Table>` tag. This causes `P -> TD` leakage errors during Semantic QA, as the ground-truth standard expects individual `<TR>`, `<TH>`, and `<TD>` tags.
-2. **MinerU Tabular Confusion**: MinerU occasionally classifies dense tabular data as generic `text` blocks. Because Stage 4 relies on MinerU's macro-boxes, perfectly split columns in Stage 2 get concatenated back together if MinerU surrounds them both with a single `text` boundary.
-3. **Artifact Bleed (Path C)**: Minor boundary overlap between standard paragraphs and edge-case headers/footers.
+```
+ACT-6cfa84   /  WCAG 1.1.1   Figure has /Alt or /ActualText
+ACT-36b590   /  WCAG 1.3.1   Heading is non-empty
+ACT-b40fd1   /  WCAG 3.1.1   Catalog /Lang is a valid BCP-47 tag
+PDFUA-7.4.2  /  WCAG 1.3.1   No heading-level skips
+PDFUA-7.1-10 /  WCAG 2.4.2   /Info /Title set AND /DisplayDocTitle true
+PDFUA-7.5.2  /  WCAG 1.3.1   /Caption colocates with /Figure or /Table
+PDFUA-7.5.3  /  WCAG 1.3.1   Every /LI is inside /L
+PDFUA-7.1-1                  /MarkInfo /Marked is true
+```
 
-## ⚠️ What is Risky
+CLI: `python -m tagger.audit.act_rules <pdf> [...]` (add `--json` for the raw aggregate).
 
-- **Heavy Dependency on Stage 3 (MinerU)**: The biggest architectural risk is treating MinerU bounding boxes as absolute truth in Stage 4. If MinerU hallucinates or merges two adjacent columns into one bounding box, the pipeline has no built-in fallback to override it, directly causing structural corruption in tables.
-- **Complex Tree State Management**: Writing deep `struct_id` relationships in `PyMuPDF` is brittle. Any disconnected nodes will result in invisible text or broken screen-reader navigation.
+## ✅ What's working
 
-## 🛡️ What is NOT Risky
+1. **CPU-native layout** — Docling Heron + TableFormer, beats GPU on all four dp-bench metrics, ~2.2 s/doc.
+2. **Scanned-PDF support** — RapidOCR (PP-OCRv4 ONNX) closes the one honest scope boundary of the CPU backend.
+3. **Borderless tables** — Docling TableFormer beats GPU's `0.429 → 0.581` on TEDS.
+4. **Figure alt-text** — SigLIP zero-shot buckets + McGraw-Hill templates with caption awareness.
+5. **PDF/UA-1 + ACT enforcement** — heading-hierarchy + structural enforcers prevent the failure modes PREP and PDFix exhibit.
+6. **Local test suite** — 266 passing under `TAGGER_LAYOUT_BACKEND=cpu`, no MinerU spawned, in under 30 s.
 
-- **Stage 1 & Stage 2 Extraction/Merging**: These run purely on geometric math and precise font metrics. They do not suffer from ML hallucination.
-- **Rule-Based Validation (Stage 6)**: Deterministic, fast, and easily extensible for new QA heuristics.
+## ⏳ What's parked / deferred
 
-## Next Steps
+- **PDF/UA-2 MathML for formulas** — formula recogniser (pix2tex / LaTeX-OCR / similar small CPU model) → MathML emitter → Associated File embedding. Substantial unit.
+- **Color contrast (WCAG 1.4.3)** — handled in a separate repo per the user's call.
+- **Heading-on-image semantics** on heavily scanned docs (Stage 1 OCR strips font signal, so H1/H2 distinction on scan-only pages relies on Heron region categories).
 
-1. **Grid topology (Priority 1)**: invert Stage 4 to treat MinerU `LayoutRegion`s as the structural truth and pull raw text into them, producing real `TR`/`TH`/`TD` cell structure instead of over-segmented monolithic tables. Quantified by the layout-accuracy harness (token agreement vs PREP ground truth).
-2. **Multi-column / formula reading order**: the one remaining reading-order remediation failure is a dense 2-column STEM paper whose equation/affiliation pages defeat the geometric monotonicity proxy. (The gross column-interleaving and the NIH margin-watermark cases are fixed: reading-order remediation rose 40%→80%.)
-3. **Alt-text quality**: when the alt-text stage is tackled, build the quality eval and compare the Gemma-4-E4B vs Qwen2.5-VL-7B backends before locking one in.
+## 📦 Configuration knobs
+
+All thresholds and backend choices live in `tagger/config.py`. The flags users actually set:
+
+| env var | maps to | values |
+|---|---|---|
+| `TAGGER_LAYOUT_BACKEND` | `LAYOUT.backend` | `cpu` (default) / `mineru` |
+| `TAGGER_ALT_TEXT_MODE` | `ALT_TEXT.mode` | `siglip` (default) / `placeholder` / `vlm` |
+| `TAGGER_OCR_QUALITY` | `OCR.quality` | `speed` / `balanced` (default) / `quality` |
+
+## 🚀 Quick start
+
+```bash
+# Tag a PDF locally on CPU (no MinerU, no GPU)
+TAGGER_LAYOUT_BACKEND=cpu python -m tagger.cli tag input.pdf -o output.pdf --report report.json
+
+# Audit a tagged PDF against ACT + PDF/UA-1 rules
+python -m tagger.audit.act_rules output.pdf
+
+# Run the test suite (266 passing, CPU backend)
+TAGGER_LAYOUT_BACKEND=cpu pytest -q
+```
+
+## 📚 More
+
+- `CLAUDE.md` — repo-level guidance for Claude Code work in this repo
+- `BLUEPRINT.md` — technical foundation document
+- `THROUGHPUT_ARCHITECTURE.md` — throughput + acquisition-readiness argument
+</content>

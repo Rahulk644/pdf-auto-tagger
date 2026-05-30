@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Run full pipeline locally on one PDF
-python -m tagger.cli tag input.pdf -o output.pdf --report report.json
+# Run full pipeline locally on one PDF — CPU backend (no MinerU, no GPU)
+TAGGER_LAYOUT_BACKEND=cpu python -m tagger.cli tag input.pdf -o output.pdf --report report.json
 
 # Run only page classification
 python -m tagger.cli classify input.pdf
@@ -17,20 +17,20 @@ python -m tagger.cli extract input.pdf
 # Start local Flask API (port 5002)
 python -m tagger.cli serve
 
-# Run on Modal GPU (A10G) — processes all 5 corpus PDFs
+# Read-only ACT + PDF/UA-1 conformance audit on any tagged PDF
+python -m tagger.audit.act_rules output.pdf [output2.pdf ...]  # --json for aggregate
+
+# Run on Modal GPU (A10G) — processes all 5 corpus PDFs (legacy MinerU path)
 /Users/rahulkhatri/Library/Python/3.9/bin/modal run run_modal.py
 
-# Run on Modal GPU — Miramar + Summary of Revenues only
+# Run on Modal GPU — Miramar + Summary of Revenues only (legacy MinerU path)
 /Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_modal_targeted.py
 
-# Run on Modal GPU — clean corpus (corpus_clean/ → output_clean/)
-/Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_clean_corpus.py
-
-# QA evaluation (LEGACY 31B auditor — retired; prefer the E4B/vLLM path below)
+# QA evaluation (legacy 31B auditor — retired; prefer the E4B/vLLM path below)
 /Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_qa_modal.py
 python analyze_qa_report.py
 
-# E4B/vLLM QA auditor (CURRENT) — deploy then drive with the prompt-v2 client
+# E4B/vLLM QA auditor (current) — deploy then drive with the prompt-v2 client
 /Users/rahulkhatri/Library/Python/3.9/bin/modal deploy tagger/qa/modal_gemma_vllm.py
 MODAL_URL=<endpoint> PDFS_DIR=<tagged-output-dir> PARALLEL=10 \
   /Users/rahulkhatri/"PREP QA Tool"/venv/bin/python "/Users/rahulkhatri/PREP QA Tool/run_corpus_modal.py" [filter]
@@ -38,111 +38,149 @@ MODAL_URL=<endpoint> PDFS_DIR=<tagged-output-dir> PARALLEL=10 \
 # Benchmark substrate — checker (PDF-A-B, CPU/free, all 125 docs)
 PYTHONPATH=. python scratch/run_benchmark.py <benchmark_root> [--remediation-dir DIR]
 
-# Benchmark substrate — strip+V2 remediation regen on the failed docs (Modal A10G)
-/Users/rahulkhatri/Library/Python/3.9/bin/modal run scratch/run_benchmark_v2.py
+# dp-bench scoring (CPU/free)
+PYTHONPATH=. python scratch/run_dpbench.py --gt-dir <gt> --pred-dir <out> --out card.json
 
-# Run tests
-pytest
-pytest tests/test_stage6.py           # single file
-pytest tests/test_stage5.py -v        # verbose
+# Run tests — LOCAL CPU BACKEND (full suite green, 266 passing, ~30s)
+TAGGER_LAYOUT_BACKEND=cpu pytest -q
+# single file / verbose:
+TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
 ```
 
 **Python environments:**
-- `.venv3/` — has `pikepdf`, `pdfplumber`, `pillow`, `modal` (use for local pipeline work)
+- `.venv3/` — has `pikepdf`, `pdfplumber`, `pillow`, `modal`, `torch`, `transformers`, `docling-ibm-models`, `rapidocr-onnxruntime`, `sentencepiece` (use for local pipeline + audit work)
 - `/Users/rahulkhatri/Library/Python/3.9/bin/` — has `modal` CLI
 - Modal remote runs Python 3.11 with the `tagger/` directory synced as `/root/tagger`
 
+## Environment flags (set at session level)
+
+| env var | maps to | values | default | when to set |
+|---|---|---|---|---|
+| `TAGGER_LAYOUT_BACKEND` | `LAYOUT.backend` | `cpu` / `mineru` | `mineru` (frozen-dataclass default; CI/local always sets `cpu`) | always `cpu` locally — `mineru` is the GPU/Modal-only path |
+| `TAGGER_ALT_TEXT_MODE` | `ALT_TEXT.mode` | `siglip` / `placeholder` / `vlm` | `siglip` | leave default unless reproducing the legacy review-required placeholders |
+| `TAGGER_OCR_QUALITY` | `OCR.quality` | `speed` / `balanced` / `quality` | `balanced` | `quality` for noisy scans |
+
 ## Architecture
 
-### 10-Stage Pipeline (`tagger/pipeline.py`)
+### Stage tree (`tagger/pipeline.py`)
 
 `AutoTaggerPipeline.run()` calls stages sequentially. Each stage receives `DocumentData` (which holds a `pages` dict of `PageData`) and modifies it in place.
 
 ```
-Stage 0  page_classifier     — Native vs scanned detection (pdfplumber heuristics)
-Stage 1  native_extractor    — Character-level extraction; assigns p{N}_c{idx} IDs
-Stage 2  text_merger         — Merges chars → words → line elements (PageElement)
-Stage 3  layout_detector     — MinerU detects layout regions (Title, Table, Figure…)
-                               + pdfplumber table fallback for tables MinerU misses
-Stage 4+5 content_router     — Maps Stage 2 PageElements into Stage 3 regions;
-           specialists        — Table/figure/formula specialists produce TaggedElements
-Stage 6  consistency_validator — Rule engine; converts bad elements to Artifact
-Stage 7  cross_page_merger   — Merges elements split across page boundaries
-Stage 8  semantic refinement — Heading level ranking, TOC, artifact, caption, list
-                               (artifact pass also tags repeated vertical-margin
-                               watermarks, e.g. "NIH-PA Author Manuscript")
-Stage 9  alt_text_generator  — Placeholder alt text by default; optional VLM mode
-                               (default backend Gemma-4-E4B endpoint, Qwen retained)
-Stage 10 struct_tree_writer  — Builds PDF struct tree (in READING order, not a
-                               geometric sort) + injects BDC/EMC markers
+Stage 0   page_classifier      Native vs scanned vs mixed vs corrupt. The
+                               sparse-text-density override catches image-of-text
+                               docs where a software (PREP) injected a header-only
+                               text layer — they'd otherwise classify as NATIVE.
+Stage 1a  native_extractor     Character-level extraction via pdfplumber; assigns
+                               p{N}_c{idx} IDs.
+Stage 1b  scanned_extractor    RapidOCR (PP-OCRv4 ONNX, Apache-2.0) on
+                               SCANNED/MIXED pages. Renders at STANDARD_DPI so
+                               pixel coords == standard 150-DPI space — no
+                               transform needed downstream. PageElement.source =
+                               "rapidocr". Lazy singleton; missing package =
+                               graceful no-op.
+Stage 2   text_merger          Merges chars → words → line elements (PageElement).
+Stage 3   layout_detector      Pluggable LayoutModelAdapter, selected by
+                               LAYOUT.backend:
+                               - cpu (default for local) — cpu_layout_detector
+                                 + Docling Heron (RT-DETRv2 layout, MIT) +
+                                 Docling TableFormer (MIT) for borderless
+                                 tables. On MIXED/SCANNED pages Heron is the
+                                 entire layout source; on NATIVE pages Heron-
+                                 detected Title/Section-header regions are
+                                 UNION'd into the pdfplumber-line heading set
+                                 (additive, never removes).
+                               - mineru — legacy MinerU2.5-Pro on Modal A10G.
+Stage 4+5 content_router       Maps Stage 2 PageElements into Stage 3 regions;
+          + specialists        specialists (Docling TableFormer for tables,
+                               figure / formula) produce TaggedElements.
+Stage 6   consistency_validator Rule engine; converts bad elements to Artifact.
+Stage 7   cross_page_merger    Merges elements split across page boundaries.
+Stage 8a  heading_ranker       H1–H6 assignment by font-tier rarity.
+Stage 8a' heading_hierarchy_enforcer  Deterministic PDF/UA-1 7.4.2 + WCAG
+                               rules: no level skips (H1→H3 collapses to
+                               H1→H2), first heading = H1, empty heading →
+                               /Artifact, punctuation-only heading → /Artifact.
+Stage 8b  toc_detector
+Stage 8c  artifact_detector    Running headers/footers/page numbers + repeated
+                               vertical-margin watermarks ("NIH-PA Author
+                               Manuscript" etc.).
+Stage 8d  caption_detector
+Stage 8e  list_builder         L > LI > Lbl + LBody nesting.
+Stage 8f  pdfua_structural_enforcer  Empty/punct-only /P|Caption|Note →
+                               /Artifact, every /Figure has /Alt, floating
+                               /Caption (no adjacent /Figure or /Table) → /P.
+Stage 9   alt_text_generator   Mode = ALT_TEXT.mode (env TAGGER_ALT_TEXT_MODE):
+                               - siglip (default) — google/siglip-base-patch16-224
+                                 zero-shot bucket (chart / photograph / logo /
+                                 schematic / map / decorative / ...). McGraw-
+                                 Hill template per bucket; decorative figures
+                                 reclassified to /Artifact (PDF4 / H67).
+                                 Caption-aware: drops "Refer to long description"
+                                 suffix when Stage-8d tagged an adjacent
+                                 /Caption (do-not-duplicate per the guidelines).
+                               - placeholder — legacy review-required string.
+                               - vlm — Gemma-4-E4B or Qwen2.5-VL (GPU).
+Stage 10  struct_tree_writer   Builds PDF struct tree (in READING order, not
+                               geometric) + injects BDC/EMC markers via the
+                               font-aware glyph counter (Type0 fonts use 2-byte
+                               codes; len(str)/len(bytes) would over-count and
+                               desync the char↔glyph mapping).
 ```
+
+### Conformance audit layer (`tagger/audit/`)
+
+Read-only checker — separate from the tagging pipeline. Reports per-rule pass / fail / N/A for the eight rules our pipeline cares about (`ACT-6cfa84`, `ACT-36b590`, `ACT-b40fd1`, `PDFUA-7.4.2`, `PDFUA-7.1-10`, `PDFUA-7.5.2`, `PDFUA-7.5.3`, `PDFUA-7.1-1`). Use this to compare our tagged output against PREP / PDFix / any other tool's tagged output deterministically.
 
 ### Key data flow invariants
 
 **Coordinate spaces** — Two spaces coexist and must never be mixed:
-- **Standard (150 DPI, top-left origin):** `PageElement.bbox`, `TaggedElement.bbox`, `LayoutRegion.bbox`. Used for all inter-stage comparisons.
+- **Standard (150 DPI, top-left origin):** `PageElement.bbox`, `TaggedElement.bbox`, `LayoutRegion.bbox`. Used for all inter-stage comparisons. The CPU layout backend's `_image_boxes` / `_heading_lineboxes` / Heron all emit 150-DPI directly.
 - **Native pdfplumber (72 DPI, top-left origin):** Only used inside Stage 1, Stage 5 table extraction, and Stage 10 BDC injection. Convert with `coord_transformer.py`.
 
-**Element ID scheme** — Stage 1 assigns `element_id = f"p{page_num}_c{char_idx}"` where `char_idx` is the raw `enumerate(page.chars)` index (skipping only blank/zero-size chars). This same ID scheme is used in `merged_from` lists all the way to Stage 10's `inject_bdc_markers` which maps char indices back to MCIDs.
+**Element ID scheme** — Stage 1 assigns `element_id = f"p{page_num}_c{char_idx}"` where `char_idx` is the raw `enumerate(page.chars)` index (skipping only blank/zero-size chars). OCR'd elements (Stage 1b) use `p{N}_o{idx}` instead (`source = "rapidocr"`). This same ID scheme is used in `merged_from` lists all the way to Stage 10's `inject_bdc_markers` which maps char indices back to MCIDs.
 
-**`merged_from`** — Every `PageElement` and `TaggedElement` carries a `merged_from: list[str]` of Stage-1 char IDs. Stage 10 uses these to decide which content-stream characters belong to each struct tree element. If `merged_from` is empty for a non-table element, Stage 10 cannot inject BDC markers for it.
+**`merged_from`** — Every `PageElement` and `TaggedElement` carries a `merged_from: list[str]` of Stage-1 char IDs. Stage 10 uses these to decide which content-stream characters belong to each struct tree element. If `merged_from` is empty for a non-table element AND there is no associated content-stream glyph, Stage 10 now emits the element with `/ActualText` only (no `/K`, no `/Pg`) — this is the canonical path for OCR'd scanned text and is PDF/UA-valid.
 
 **Table cells** are NOT `TaggedElement` instances — they live inside `el.specialist_data["cells"]` as dicts with keys `row_idx`, `col_idx`, `text`, `merged_from`, `is_header`, `is_row_header`. Stage 10 reads these directly to build `TR > TH/TD` structure.
 
 ### Stage 10 BDC injection (`content_stream_writer.py`)
 
-`inject_bdc_markers` rewrites the page content stream entirely. It strips all existing `BDC`/`BMC`/`EMC` operators from the original stream (to prevent phantom MCID conflicts) then injects new `BDC`/`EMC` around text operators using `char_to_mcid` — a map from Stage-1 char index → MCID built from `merged_from` lists. Characters not in `char_to_mcid` (whitespace skipped by Stage 1) fall outside any BDC block.
+`inject_bdc_markers` rewrites the page content stream entirely. It strips all existing `BDC`/`BMC`/`EMC` operators from the original stream (to prevent phantom MCID conflicts) then injects new `BDC`/`EMC` around text operators using `char_to_mcid` — a map from Stage-1 char index → MCID built from `merged_from` lists.
 
-**Reading order (do NOT re-sort by geometry):** `struct_tree_writer` builds the struct tree (`/K`) in the pipeline's incoming reading order — the `TaggedElement` list is already in MinerU region / `reading_order` sequence (content_router). A geometric `(top, left)` re-sort here interleaves the columns of multi-column docs and corrupts the assistive reading order; that bug was removed. MCID allocation is content-stream-driven (`_rewrite_stream`), so element order only affects `/K` order, not MCID numbering — the only `/K`-order-sensitive UA1 clause is 7.4.2 (heading levels), handled by `_normalize_heading_levels` re-running on the built tree.
+**Font-aware glyph counting:** the rewriter's positional counter `current_char_idx` advances by `len(bytes(operand)) // bytes_per_code` where `bytes_per_code` is resolved from the current Tf operator's font subtype (Type0 = 2, simple = 1). Using `len(str(operand))` instead — the previous bug — over-counts on Type0 fonts and desyncs the entire char↔glyph mapping for that page (table data falls to `/Artifact`, screen readers miss it, veraPDF still passes).
 
-### Stage 9 alt-text VLM backend (`stage9_alttext/alt_text_generator.py`)
+### CPU layout backend (`tagger/stage3_layout/cpu_layout_detector.py`)
 
-Default is **placeholder** mode (`generate_alt_text_placeholders`) — sets a review-required `/Alt` so output is PDF/UA-valid. The optional VLM mode (`generate_alt_text_vlm`) dispatches on `ALT_TEXT.vlm_backend`:
-- `"gemma_e4b"` (default): POSTs each figure crop to the deployed Gemma-4-E4B vLLM endpoint (`$GEMMA_ALT_ENDPOINT` → the same `modal_gemma_vllm.py` server as the QA auditor). Requests fan out **concurrently** (`ALT_TEXT.gemma_parallel`, one image per request, NEVER batched — batching deadlocks Gemma's Triton JIT); parallelism comes from Modal container fan-out. Thinking defaults OFF for captioning speed.
-- `"qwen"`: loads Qwen2.5-VL-7B in-process (`generate_alt_text_qwen`), retained for the future head-to-head quality comparison.
+Drop-in `LayoutModelAdapter` for Stage 3 that derives `LayoutRegion[]` from Stage-2 PageElements + pdfplumber primitives + Docling Heron. Branches on Stage-0 `page_type`:
 
-E4B-vs-Qwen alt-text **quality is not yet measured** (the alt-text quality eval is deferred); the swap is operational stack-consolidation only.
+- **NATIVE** — pdfplumber lattice → tables; Docling-table merge (TableFormer adds borderless); `_heading_lineboxes` for headings from pdfplumber `extract_text_lines`; `_merge_docling_headings` adds Heron-detected Title/Section-header regions that pdfplumber missed (additive only); `_image_boxes` with the loose `0.7` page-area threshold; XY-cut reading order.
+- **MIXED / SCANNED** — Heron is the entire region source via `_detect_via_heron`. Page-spanning images (≥40% of page) are deliberately dropped — that's the page-image background of a scan, not a real Picture, and would otherwise `_center_inside`-block every OCR PageElement.
 
-### QA evaluation (`tagger/qa/` + `scratch/run_qa_modal.py`)
+### Stage 1 scanned extractor (`tagger/stage1_extraction/scanned_extractor.py`)
 
-`scratch/run_qa_modal.py` is the QA runner. It runs locally via `modal run` (so the Modal gRPC client stays alive), does all PDF extraction and rendering locally, and calls `GemmaInference.generate.remote()` on Modal for each chunk:
-
-- **Local:** pdfplumber MCID extraction, pdfminer struct-tree parsing, fitz page rendering
-- **Remote:** Gemma 4 31B on H100 (`qa-gemma4-inference` app, up to 9 containers)
-- **Chunking:** 60 elements/chunk, sequential within a page, pages processed sequentially
-- **Rules:** `tagger/qa/rules_db.py` injects PDF/UA + WCAG 2.2 rules into prompts based on tags present
-
-Results saved to `/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal/` as `qa_<stem>.json`. `analyze_qa_report.py` in the Tagger root prints per-document breakdowns.
-
-**Deploying inference changes:** `modal deploy tagger/qa/modal_inference.py`
-
-**Current production auditor = Gemma 4 E4B via vLLM (replaces the 31B above).** `tagger/qa/modal_gemma_vllm.py` serves `google/gemma-4-E4B-it` on vLLM (H100, thinking ON, temp 0.1) — the small reasoning model beats the old 31B (transformers `.generate()`) at far lower latency, and strips the thinking trace server-side. Deploy: `modal deploy tagger/qa/modal_gemma_vllm.py` (needs the `huggingface-prep` Modal secret for the gated model). HTTP contract: POST `{image_b64, prompt, max_tokens=8000, temperature=0.1, enable_thinking=true}` → `{response (clean JSON array), finish_reason, input/output_tokens, elapsed_s}`. Drive it with the prompt-v2 client `run_corpus_modal.py` (in the PREP-QA-Tool repo): one page image + one chunk of ≤20 elements per request, fan out concurrently (never batch multiple chunks — Gemma 4's heterogeneous head dims make vLLM's Triton backend JIT mid-inference and hang), parse the LAST balanced `[...]`, retry on `finish_reason=="length"` and for any omitted element id. Run: `MODAL_URL=<endpoint> PDFS_DIR=<tagged outputs> PARALLEL=10 python run_corpus_modal.py`.
-
-**Corpus:** Five test PDFs. Tagged outputs land in `output_modal/`.
-
-### Benchmark evaluation (`tagger/benchmark/` + `scratch/run_benchmark.py`)
-
-The third eval axis (alongside veraPDF = ISO conformance and Gemma QA = noisy tag quality): scores tagged output against the **PDF-Accessibility-Benchmark** (125 scholarly PDFs, expert WCAG/PDF-UA labels per criterion). CPU/deterministic — one bounded Modal regen only for the strip+V2 remediation pass.
-
-- `struct_utils.py` — shared struct-tree readers; identifies elements by `/S` presence (NOT the optional `/Type /StructElem`) and resolves `/RoleMap`. The `scratch/layout_*` harness tools import from here.
-- `verdicts/` — `base.py` (`Verdict` + `CannotDeriveReason` + `derive_verdict` dispatch) + one module per criterion (verdicts derive from the **expert discriminator**, not veraPDF conformance — they can diverge).
-- `loader.py` → `harness.py` (checker vs remediation framing; the hard-assert keeps a `failed` label as an input selector, never an agreement target) → `report.py` (scorecard).
-- Run: `PYTHONPATH=. python scratch/run_benchmark.py <benchmark_root> [--remediation-dir DIR]`.
-
-Three axes are correlated but distinct — a doc can be WCAG-accessible yet veraPDF-non-conformant. Don't conflate them.
+RapidOCR PP-OCRv4 ONNX singleton with quality preset (`OCR.quality` → `text_score` / `box_thresh`). Renders pages at `STANDARD_DPI` so output pixel coords are already in 150-DPI standard space; no transform needed. Polygon → bbox conversion is axis-aligned (`min/max` over the 4 corners). `source = "rapidocr"` so Stage 4 can route OCR text differently if needed.
 
 ### Configuration (`tagger/config.py`)
 
-All magic numbers are in frozen dataclasses exported as singletons (`PAGE_CLASSIFIER`, `TEXT_MERGER`, `LAYOUT`, `TABLE`, `VALIDATOR`, `SEMANTIC`, `WRITEBACK`, `PIPELINE`). Stage code imports from `tagger.config` — never hardcode thresholds.
+All magic numbers are in frozen dataclasses exported as singletons. The dataclasses that read environment overrides via `field(default_factory=...)`:
 
-### Running on Modal
+- `LayoutConfig.backend` ← `TAGGER_LAYOUT_BACKEND`
+- `AltTextConfig.mode` ← `TAGGER_ALT_TEXT_MODE`
+- `OCRConfig.quality` ← `TAGGER_OCR_QUALITY`
 
-`run_modal.py` defines a Modal app with an A10G GPU. The `tagger/` directory is synced via `add_local_dir`. The pipeline runs remotely and returns `(tagged_pdf_bytes, report_bytes)`. The correct modal binary is `/Users/rahulkhatri/Library/Python/3.9/bin/modal`.
+Stage code imports from `tagger.config` — never hardcode thresholds.
+
+### Running on Modal (legacy GPU path)
+
+`run_modal.py` defines a Modal app with an A10G GPU. The `tagger/` directory is synced via `add_local_dir`. The pipeline runs remotely and returns `(tagged_pdf_bytes, report_bytes)`. The correct modal binary is `/Users/rahulkhatri/Library/Python/3.9/bin/modal`. Use this only when you specifically want the MinerU layout output for comparison; the CPU backend beats it on every dp-bench metric.
 
 ## Known architectural constraints
 
-- **MinerU always on Modal** — Never run MinerU (Stage 3) locally; it pegs CPU on M1 8GB. Always use `modal run`.
-- **One ML model at a time** — Pipeline is designed for M1 8GB. MinerU (Stage 3) loads, runs, and is GC'd before Stage 9's Qwen VL loads. Don't hold model references across stages.
+- **MinerU always on Modal** — Never run MinerU (Stage 3 `mineru` backend) locally; it pegs CPU on M1 8GB. Always use `modal run`. The CPU backend exists precisely so you don't need it.
+- **Test suite always under `TAGGER_LAYOUT_BACKEND=cpu`** — the pipeline tests gate MinerU-output-specific assertions to the `mineru` backend, so a default-backend `pytest` will spawn MinerU and lag. The full suite is green locally on the CPU backend.
+- **One ML model at a time** — Pipeline is designed for M1 8GB. Docling Heron + TableFormer + SigLIP coexist (small enough); MinerU was the one that needed isolation. Don't hold large model references across stages.
 - **Stage 6 runs before Stage 8** — Any element created or reclassified by Stage 8 (heading ranker, list builder, etc.) bypasses Stage 6 validation.
 - **pdfplumber `page.chars` skips** — Stage 1 skips chars where `text.isspace()` or bbox width/height < 0.1. These chars have no `p{N}_c{idx}` ID and are invisible to Stage 10's BDC injection.
 - **QA runner needs `modal run`** — `scratch/run_qa_modal.py` must be invoked via `modal run`, not plain `python`. Running it directly causes `ClientClosed` errors when `.generate.remote()` tries to hold a connection without a Modal app context.
+</content>
