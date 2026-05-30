@@ -21,7 +21,7 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 
 | Requirement | Standing | Evidence |
 |---|---|---|
-| **Semantic & structural tagging** | Strong on high-value tags; fine semantic inline tags flattened to `<P>` | dp-bench overall **0.839**; suite 306 green |
+| **Semantic & structural tagging** | Strong on high-value tags; fine semantic inline tags flattened to `<P>` | dp-bench overall **0.839**; suite 307 green |
 | **Artifacting** (hide decorative) | Headers/footers/page-#s/margin-watermarks artifacted | Stage 8c `artifact_detector` |
 | **Logical reading order** | AI regions ordered by XY-cut; multi-column/floating still imperfect | NID **~0.83–0.888** |
 | **Alternative text** | *Presence* solved; *quality* is the hole | short-alt 93% guideline-compliant; long-description **0%** |
@@ -58,7 +58,7 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 | Metric | Value | Source |
 |---|---|---|
 | veraPDF UA-1 | **compliant** (CI-gated) | `scripts/verapdf_gate.py` |
-| Test suite | **306 passed**, 3 skipped | `pytest` (cpu backend) |
+| Test suite | **307 passed**, 3 skipped | `pytest` (cpu backend) |
 | dp-bench overall | **0.839** | dp-bench |
 | Reading order (NID) | **0.83–0.888** | dp-bench / corpus |
 | Tables (TEDS) | **0.740** | dp-bench |
@@ -98,21 +98,24 @@ P, H1–H6, L/LI/Lbl/LBody, Table/TR/TH/TD, Figure, Formula (+MathML /AF, opt-in
 
 ### SHIPPED THIS SESSION (committed: 5c15fa6, f1f5b76)
 - ✅ `/Form` producer for widget annotations (`_tag_widget_annotations`) — `/Form`+OBJR+`/TU`-from-fieldname; 217/217 on test doc 389, audit 3→0, integrity clean, unit-tested.
-- ✅ **Link auto-detection** (`_autodetect_link_annotations`) — whole-token regex finds bare URL/email text with no covering annotation → synthesizes a functional `/Link` `Annot` (`/A /URI`), which existing `_tag_link_annotations` wraps into `/Link` struct + OBJR + `/Contents`. Verified: doc 1396 → 29 links, doc 1114 → 21 (incl `mailto:`), audit 3→0, integrity clean, unit-tested. **Known wart:** line-wrapped URLs truncate (→ deferred compound-link merge). Suite 303→**305**.
+- ✅ **Link auto-detection** (`_autodetect_link_annotations`) — whole-token regex finds bare URL/email text with no covering annotation → synthesizes a functional `/Link` `Annot` (`/A /URI`), which existing `_tag_link_annotations` wraps into `/Link` struct + OBJR + `/Contents`. Verified: 1396 → 29 links, 1114 → 21 (incl `mailto:`), 1058 → 14, audit 3→0, integrity clean, unit-tested. **Lift re-measured honestly:** closes the *bare-URL/email* subset only; the rest of the incumbent's link gap is **non-URL cross-reference links** (bill numbers, "click here", TOC phrases) whose target can't be derived from text — inherently non-deterministic, **deferred**. Known wart: line-wrapped URLs truncate. Suite 303→**305**.
 - ✅ Convention-free coverage scorecard harness (`scratch/prep_baseline/`) — 80-doc run complete.
 - ✅ **Digital-signature safety guard** (`pdf_is_signed` + Stage 10 gate) — signed PDFs (49/774 in corpus) are detected and emitted **unmodified** (rewriting invalidates the signature); flagged `signed_unmodified`. Unit-tested end-to-end.
+- ✅ **Adjacent-label `/TU` for cryptic form fields** — 37% of corpus field names are generated ids (`Text12`, `X3`); for those, `/TU` is now derived from the visible label (text to the left / above the widget) instead of the useless name. `_clean_label` rejects non-word labels (numbers, markers) → safe fallback to the field name; never a misleading `/TU`. Controlled test passes (`Text1` + "Employee Name" → `/TU` "Employee Name"). Low applicability on this corpus's *grid* forms (they fall back safely), real win for structured forms.
 - ✅ **Figure under-detection INVESTIGATED → no fix.** Diagnostic (30 docs): 20 ok/over, 6 "undercount" that are really **incumbent over-count** (we capture the actual source images; surplus correctly → Artifact per PDF4/H67), 3 incumbent-only (phantom/vector), 1 true detection-miss. The "recall 0.52 vs incumbent" is ~90% an incumbent IMG-counting artifact, not our miss. Chasing it would invent figures.
 
+- ✅ **Redaction guard INVESTIGATED → do not build.** Prevalence probe (150 docs): the naive "dark filled rect over dark text" heuristic flagged 43%, but inspection showed **all false positives** — heading underlines (1px-tall rules) and light background/content panels that pdfplumber misreads as `fill=0` (covering 256–660 chars of *readable* text). True redaction prevalence in this corpus is ~0, and the heuristic can't distinguish a redaction box from a background panel via extraction alone → a guard would **hide real content**. Deferred (would need rendered-pixel occlusion analysis for a near-zero-prevalence case).
+
 ### NEXT (immediate · deterministic · measured)
-1. **Redaction safety guard** — detect opaque rect over live text → don't surface redacted text. Do-no-harm, high stakes for legal docs (companion to the signature guard).
-2. Re-run the coverage scorecard counting links/forms from OUR OUTPUT (not source) to quantify the link-fix lift.
+1. Re-measure the coverage scorecard counting links/forms from OUR OUTPUT (not source) to quantify the link-fix lift.
+2. **Alt-text quality** (the genuine semantic hole) — scoreboard current corpus alt-text vs the McGowan rubric, then the document-context VLM upgrade on Modal.
 
 ### PLANNED (will do · needs GPU or larger work · scoreboard-gated)
 - **Alt-text quality** → document-context VLM (Gemma-E4B on Modal) scored vs the McGowan rubric — turns "blue bars" into "Q3 revenue $2M→$5M". *(the genuine semantic hole; Modal earns its spend here)*
 - **Table topology** → colspan/rowspan, hierarchical TH, multi-line wrapped-cell false-row-break (the TEDS 0.74 bucket).
 - **Reading-order model** for multi-column/floating regions (LayoutReader-style over Heron regions) — gated on a reading-order scoreboard (prior layout-model swaps lost end-to-end).
 - **Cross-page TRUE merge** → single logical `/Table`//`/L` (today Stage 7 *detects + flags* artifact-aware, but doesn't structurally stitch).
-- **Form quality** → adjacent-visual-label `/TU` (not just field name), radio-button grouping.
+- **Form quality** → radio-button grouping (adjacent-visual-label `/TU` shipped).
 
 ### DEFERRED (real but low corpus prevalence / genuinely hard)
 **Vector-graphic figures** (logos/diagrams drawn as paths, not raster — pdfplumber doesn't see them as images; ~3–4/30 docs in the figure diagnostic); flowchart logical (non-geometric) reading order + connector arrows; sub-total indentation hierarchy in tables; fake/printed checkboxes (Wingdings/vector squares, non-AcroForm); TOC dot-leader artifacting; QR/barcode payload decode → alt-text; **compound (multi-line) link merge** (line-wrapped URLs truncate today); cross-page hyphenation `/ActualText`; inline `/Lang` language-switch spans; drop caps.

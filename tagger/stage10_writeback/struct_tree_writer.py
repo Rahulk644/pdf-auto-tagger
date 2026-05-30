@@ -271,6 +271,56 @@ def _tag_link_annotations(
     return next_sp
 
 
+# A field name is useless as an accessible name if it is empty, too short, or
+# basically a generated id ("Text12", "f_01", "X3", "check2").
+_CRYPTIC_FIELD_RE = re.compile(r"^(?:text|field|untitled|check|button|fld|f|q)?[\W_]*\d+[\W_\d]*$", re.I)
+
+
+def _cryptic_field_name(name) -> bool:
+    if not name:
+        return True
+    n = str(name).strip()
+    if len(n) < 3:
+        return True
+    if _CRYPTIC_FIELD_RE.match(n):
+        return True
+    return sum(c.isalpha() for c in n) < len(n) * 0.5
+
+
+def _clean_label(s):
+    if not s:
+        return None
+    s = s.strip().rstrip(":").strip()
+    if len(s) < 2 or not any(c.isalpha() for c in s):
+        return None
+    return s[:120]
+
+
+def _widget_label_from_words(rect, words, ph):
+    """Derive a form field's visible label from page words: the text immediately to
+    the LEFT on the same row (dominant convention), else the line just ABOVE. rect is
+    the widget /Rect in PDF points (bottom-left); words are pdfplumber words (top-left)."""
+    x0, y0, x1, y1 = rect
+    wtop, wbot = ph - y1, ph - y0
+    wh = max(wbot - wtop, 1.0)
+
+    def in_row(w):
+        c = (w["top"] + w["bottom"]) / 2
+        return wtop - wh * 0.5 <= c <= wbot + wh * 0.5
+
+    left = [w for w in words if w["x1"] <= x0 + 2 and 0 <= (x0 - w["x1"]) < 260 and in_row(w)]
+    if left:
+        left.sort(key=lambda w: w["x0"])
+        return _clean_label(" ".join(w["text"] for w in left))
+    above = [w for w in words if w["bottom"] <= wtop + 2 and (wtop - w["bottom"]) < 28
+             and not (w["x1"] < x0 - 4 or w["x0"] > x1 + 4)]
+    if above:
+        nb = max(w["bottom"] for w in above)
+        row = sorted((w for w in above if abs(w["bottom"] - nb) < 4), key=lambda w: w["x0"])
+        return _clean_label(" ".join(w["text"] for w in row))
+    return None
+
+
 def _tag_widget_annotations(
     pdf,
     page,
@@ -280,18 +330,35 @@ def _tag_widget_annotations(
     parent_map_entries: list,
     next_sp: int,
     stats: dict,
+    input_path=None,
+    page_idx: int = 0,
 ) -> int:
     """Bind each form-field Widget annotation to a /Form struct element (PDF/UA
     7.18.1 + Matterhorn 11-xx; one widget per /Form, OBJR back to the annotation).
 
-    Mirrors _tag_link_annotations. A widget with no accessible name (/TU) gets one
-    backfilled from its field name (/T) so screen readers announce the field — the
-    structural floor that lets an otherwise-untagged form field stop forcing manual
-    remediation. Hidden widgets (/F & 2) and already-tagged ones are skipped.
+    Mirrors _tag_link_annotations. A widget with no accessible name (/TU) gets one:
+    the field name (/T) if it is meaningful, otherwise — for the ~37% of corpus fields
+    whose name is a generated id like "Text12" — the adjacent visual label (text to the
+    left / above the control). Hidden widgets (/F & 2) and already-tagged ones skipped.
     """
     annots = page.obj.get("/Annots")
     if annots is None:
         return next_sp
+
+    _words_cache = {"v": None}  # extracted lazily, once, only if a label is needed
+
+    def _page_words():
+        if _words_cache["v"] is None:
+            _words_cache["v"] = []
+            if input_path is not None:
+                try:
+                    from tagger.page_cache import open_pdf
+                    with open_pdf(str(input_path)) as plumb:
+                        if page_idx < len(plumb.pages):
+                            _words_cache["v"] = plumb.pages[page_idx].extract_words(use_text_flow=False)
+                except Exception:
+                    pass
+        return _words_cache["v"]
 
     for a in annots:
         if str(a.get("/Subtype")) != "/Widget":
@@ -326,15 +393,25 @@ def _tag_widget_annotations(
         }))
         _append_k_child(owner, form_elem)
 
-        # Accessible name (7.18.1 / WCAG 4.1.2): if the field has no tooltip, fall
-        # back to its field name so the control is not announced as unlabeled.
+        # Accessible name (7.18.1 / WCAG 4.1.2): if the field has no tooltip, give it
+        # one. Prefer a MEANINGFUL field name; if the name is a generated id, derive
+        # the visible label from adjacent page text instead (else screen readers
+        # announce "edit text, Text12").
         if a.get("/TU") is None:
             field_name = a.get("/T")
             if field_name is None:
                 parent = a.get("/Parent")
                 if parent is not None:
                     field_name = parent.get("/T")
-            if field_name is not None:
+            label = None
+            if _cryptic_field_name(field_name):
+                label = _widget_label_from_words(
+                    tuple(float(x) for x in rect), _page_words(), page_height_pt)
+                if label:
+                    stats["form_labels_from_layout"] = stats.get("form_labels_from_layout", 0) + 1
+            if label is not None:
+                a["/TU"] = String(label)
+            elif field_name is not None:
                 a["/TU"] = String(str(field_name))
 
         a["/StructParent"] = next_sp
@@ -693,6 +770,7 @@ def tag_untagged_pdf(
         "struct_tree_created": False,
         "links_tagged": 0,
         "links_autodetected": 0,
+        "form_labels_from_layout": 0,
         "annots_tagged": 0,
         "repair_mode": repair_mode,
         "repair_findings": {},
@@ -1055,6 +1133,7 @@ def tag_untagged_pdf(
             next_sp = _tag_widget_annotations(
                 pdf, page, doc_elem, page_struct_owners,
                 page_height_pt, parent_map_entries, next_sp, stats,
+                input_path=input_path, page_idx=page_idx,
             )
 
             # Tag remaining markup annotations (FreeText, etc.) as /Annot.

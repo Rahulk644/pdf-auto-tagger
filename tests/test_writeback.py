@@ -327,3 +327,34 @@ def test_signed_pdf_detection_and_skip(tmp_path):
     AutoTaggerPipeline().run(input_pdf=str(p_signed), output_pdf=str(out))
     with pikepdf.open(str(out)) as o:
         assert "/StructTreeRoot" not in o.Root, "signed PDF was modified (struct tree added)"
+
+
+def test_cryptic_widget_gets_adjacent_label_tu(tmp_path):
+    """A form field with a generated-id name ("Text1") and no /TU must get its
+    accessible name from the adjacent visible label ("Employee Name"), not the
+    useless field name. Regression guard: 37% of corpus field names are cryptic.
+    Where no clean label exists, _clean_label filters junk and we fall back to the
+    field name (safe — never a misleading /TU)."""
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(612, 792))
+    font = pdf.make_indirect(pikepdf.Dictionary({
+        "/Type": pikepdf.Name.Font, "/Subtype": pikepdf.Name.Type1,
+        "/BaseFont": pikepdf.Name.Helvetica}))
+    page.obj["/Resources"] = pikepdf.Dictionary({"/Font": pikepdf.Dictionary({"/F1": font})})
+    page.obj["/Contents"] = pdf.make_stream(b"BT /F1 12 Tf 72 700 Td (Employee Name) Tj ET\n")
+    widget = pdf.make_indirect(pikepdf.Dictionary({
+        "/Type": pikepdf.Name.Annot, "/Subtype": pikepdf.Name.Widget, "/FT": pikepdf.Name.Tx,
+        "/T": pikepdf.String("Text1"), "/Rect": pikepdf.Array([200, 696, 400, 716])}))
+    page.obj["/Annots"] = pikepdf.Array([widget])
+    input_path = tmp_path / "form_cryptic.pdf"
+    pdf.save(str(input_path)); pdf.close()
+
+    els = [TaggedElement(element_id="p1_c0", page_num=1, pdf_tag=PDFTag.P, text="Employee Name",
+                         bbox=(150, 160, 300, 185), merged_from=[f"p1_c{i}" for i in range(13)])]
+    out_path = tmp_path / "form_cryptic_out.pdf"
+    tag_untagged_pdf(str(input_path), str(out_path), els, total_pages=1)
+
+    with pikepdf.open(str(out_path)) as o:
+        w = o.pages[0].obj["/Annots"][0]
+        assert str(w.get("/TU")) == "Employee Name", (
+            f"cryptic field should take the adjacent label as /TU, got {w.get('/TU')}")
