@@ -96,6 +96,25 @@ def classify_figure(image) -> Tuple[str, float]:
         return ("other", 0.0)
 
 
+def _is_clean_label(txt: str) -> bool:
+    """Keep only labels that read as real words, not OCR garble or data values.
+    The alt-text scoreboard (Alt4Blind) showed the old 'has any letter' gate let
+    through OCR noise like 'Squee2'In', 'H 4±0.56', '—Squeez'In' — garbage a screen
+    reader would then read aloud. Require (a) the token be ≥70% letters among its
+    non-space chars (drops digit/symbol-mashed axis fragments) AND (b) contain at
+    least one ≥3-char word that is ≥80% alphabetic (drops single-fragment mangles).
+    Pure-number / symbol-only tokens fail (a) — preserves the no-data-values rule."""
+    nonspace = [c for c in txt if not c.isspace()]
+    if not nonspace:
+        return False
+    if sum(c.isalpha() for c in nonspace) / len(nonspace) < 0.7:
+        return False
+    for w in txt.split():
+        if len(w) >= 3 and sum(c.isalpha() for c in w) / len(w) >= 0.8:
+            return True
+    return False
+
+
 def figure_labels(image, max_labels: int = 4) -> list:
     """OCR a figure crop and return short TEXT labels (axis titles, legend
     terms) — deliberately NOT data values: pure-number / symbol-only tokens are
@@ -118,7 +137,7 @@ def figure_labels(image, max_labels: int = 4) -> list:
             txt = str(item[1]).strip()
             if not (2 <= len(txt) <= 40):
                 continue
-            if not any(c.isalpha() for c in txt):  # drop pure numbers/symbols (no data values)
+            if not _is_clean_label(txt):  # drop OCR garble + data values (see below)
                 continue
             key = txt.lower()
             if key in seen:
