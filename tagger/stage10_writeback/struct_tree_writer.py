@@ -15,6 +15,7 @@ Name objects are used only for values (e.g., Name.Document).
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import pikepdf
@@ -241,6 +242,164 @@ def _tag_link_annotations(
         stats["links_tagged"] = stats.get("links_tagged", 0) + 1
 
     return next_sp
+
+
+def _tag_widget_annotations(
+    pdf,
+    page,
+    doc_elem,
+    owners: list[tuple[tuple, object]],
+    page_height_pt: float,
+    parent_map_entries: list,
+    next_sp: int,
+    stats: dict,
+) -> int:
+    """Bind each form-field Widget annotation to a /Form struct element (PDF/UA
+    7.18.1 + Matterhorn 11-xx; one widget per /Form, OBJR back to the annotation).
+
+    Mirrors _tag_link_annotations. A widget with no accessible name (/TU) gets one
+    backfilled from its field name (/T) so screen readers announce the field — the
+    structural floor that lets an otherwise-untagged form field stop forcing manual
+    remediation. Hidden widgets (/F & 2) and already-tagged ones are skipped.
+    """
+    annots = page.obj.get("/Annots")
+    if annots is None:
+        return next_sp
+
+    for a in annots:
+        if str(a.get("/Subtype")) != "/Widget":
+            continue
+        if a.get("/StructParent") is not None:
+            continue  # already in a struct tree
+        f = a.get("/F")
+        if f is not None and (int(f) & 2):  # Hidden — do not tag
+            continue
+        rect = a.get("/Rect")
+        if rect is None:
+            continue
+
+        rect_std = pdf_to_standard(tuple(float(x) for x in rect), page_height_pt)
+        owner = doc_elem
+        best = 0.0
+        for bbox, se in owners:
+            area = _intersect_area(rect_std, bbox)
+            if area > best:
+                best = area
+                owner = se
+
+        form_elem = pdf.make_indirect(Dictionary({
+            "/Type": Name.StructElem,
+            "/S": Name("/Form"),
+            "/P": owner,
+            "/K": Array([Dictionary({
+                "/Type": Name.OBJR,
+                "/Obj": a,
+                "/Pg": page.obj,
+            })]),
+        }))
+        _append_k_child(owner, form_elem)
+
+        # Accessible name (7.18.1 / WCAG 4.1.2): if the field has no tooltip, fall
+        # back to its field name so the control is not announced as unlabeled.
+        if a.get("/TU") is None:
+            field_name = a.get("/T")
+            if field_name is None:
+                parent = a.get("/Parent")
+                if parent is not None:
+                    field_name = parent.get("/T")
+            if field_name is not None:
+                a["/TU"] = String(str(field_name))
+
+        a["/StructParent"] = next_sp
+        parent_map_entries.append((next_sp, form_elem))
+        next_sp += 1
+        stats["forms_tagged"] = stats.get("forms_tagged", 0) + 1
+
+    return next_sp
+
+
+# URL / email auto-detection — conservative WHOLE-TOKEN match (anchored ^…$) so we
+# only link a word that IS a URL/email, never a fragment of prose (precision over
+# recall: a missed link is recoverable, a wrong link is noise).
+_URL_RE = re.compile(r"^(?:https?://|www\.)\S+$", re.IGNORECASE)
+_EMAIL_RE = re.compile(r"^[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}$")
+_TRAIL = ".,;:!?)]}>\"'"
+
+
+def _autodetect_link_annotations(pdf, page, page_idx, input_path, stats) -> None:
+    """Synthesize /Link annotations for URL / email TEXT that has no existing link
+    annotation (the incumbent auto-links such text; we previously only tagged
+    pre-existing annotations — measured the #1 coverage gap on the baseline corpus).
+
+    Each synthesized annotation is FUNCTIONAL (/A /URI, so it is clickable) AND, by
+    living on the page /Annots, is picked up by _tag_link_annotations which adds the
+    /Link struct element + OBJR + /Contents + /StructParent. So this only produces the
+    annotation; the conformant structure is the existing machinery's job.
+
+    Detection is whole-token (pdfplumber word) so it cannot link a fragment of a
+    sentence; spans already covered by a link are skipped (no double-linking).
+    """
+    from tagger.page_cache import open_pdf
+
+    try:
+        with open_pdf(str(input_path)) as plumb:
+            if page_idx >= len(plumb.pages):
+                return
+            pl_page = plumb.pages[page_idx]
+            words = pl_page.extract_words(use_text_flow=False)
+            ph = float(pl_page.height)
+    except Exception:
+        return
+
+    existing = []
+    annots = page.obj.get("/Annots")
+    if annots is not None:
+        for a in annots:
+            if str(a.get("/Subtype")) == "/Link":
+                r = a.get("/Rect")
+                if r is not None:
+                    existing.append(tuple(float(x) for x in r))
+
+    def covered(rect):
+        cx, cy = (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2
+        return any(e[0] <= cx <= e[2] and min(e[1], e[3]) <= cy <= max(e[1], e[3]) for e in existing)
+
+    new_annots = []
+    for w in words:
+        core = w["text"].strip().rstrip(_TRAIL)
+        if not core:
+            continue
+        is_email = bool(_EMAIL_RE.match(core))
+        is_url = bool(_URL_RE.match(core))
+        if not (is_url or is_email):
+            continue
+        # pdfplumber top/bottom are measured from the page top; PDF /Rect is
+        # bottom-left origin → flip with the page height.
+        x0, x1 = float(w["x0"]), float(w["x1"])
+        rect = (x0, ph - float(w["bottom"]), x1, ph - float(w["top"]))
+        if covered(rect):
+            continue
+        if is_url:
+            uri = ("http://" + core) if core.lower().startswith("www.") else core
+        else:
+            uri = "mailto:" + core
+        new_annots.append(pdf.make_indirect(Dictionary({
+            "/Type": Name.Annot,
+            "/Subtype": Name("/Link"),
+            "/Rect": Array([round(v, 2) for v in rect]),
+            "/Border": Array([0, 0, 0]),
+            "/F": 4,  # Print
+            "/A": Dictionary({"/Type": Name("/Action"), "/S": Name("/URI"), "/URI": String(uri)}),
+        })))
+        stats["links_autodetected"] = stats.get("links_autodetected", 0) + 1
+
+    if not new_annots:
+        return
+    if annots is None:
+        page.obj["/Annots"] = Array(new_annots)
+    else:
+        for a in new_annots:
+            annots.append(a)
 
 
 def _xmp_packet(title: str) -> bytes:
@@ -506,6 +665,7 @@ def tag_untagged_pdf(
         "pages_modified": 0,
         "struct_tree_created": False,
         "links_tagged": 0,
+        "links_autodetected": 0,
         "annots_tagged": 0,
         "repair_mode": repair_mode,
         "repair_findings": {},
@@ -853,8 +1013,19 @@ def tag_untagged_pdf(
             page.obj["/StructParents"] = page_key
             parent_map_entries.append((page_key, page_struct_parents))
 
+            # Synthesize /Link annotations for bare URL/email text (incumbent
+            # auto-links these; we previously tagged only pre-existing annotations).
+            # Runs BEFORE _tag_link_annotations so the new annots get wrapped too.
+            _autodetect_link_annotations(pdf, page, page_idx, input_path, stats)
+
             # Tag Link annotations on this page (object-level StructParent keys).
             next_sp = _tag_link_annotations(
+                pdf, page, doc_elem, page_struct_owners,
+                page_height_pt, parent_map_entries, next_sp, stats,
+            )
+
+            # Tag form-field Widget annotations as /Form (one widget per /Form).
+            next_sp = _tag_widget_annotations(
                 pdf, page, doc_elem, page_struct_owners,
                 page_height_pt, parent_map_entries, next_sp, stats,
             )

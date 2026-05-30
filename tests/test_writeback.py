@@ -197,3 +197,105 @@ def test_struct_tree_preserves_reading_order_not_geometry(tmp_path):
     assert order == ["Title", "LeftOne", "LeftTwo", "RightOne", "RightTwo"], (
         f"struct /K not in reading order (got {order}); a geometric re-sort would "
         f"interleave columns as Title, RightOne, LeftOne, RightTwo, LeftTwo")
+
+
+def test_widget_annotations_tagged_as_form(tmp_path):
+    """An untagged form field (Widget annotation) must be wrapped in a /Form struct
+    element with an OBJR back to the widget, get a fresh /StructParent, and — when it
+    has no /TU — an accessible name backfilled from its field name (/T). Regression
+    guard for the form-tagging gap (incumbent-baseline analysis: 16% of source PDFs
+    carry widgets; PDF/UA 7.18.1 / Matterhorn requires each be tagged)."""
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(612, 792))
+    page.obj["/Contents"] = pdf.make_stream(b"BT /F1 12 Tf 72 740 Td (Form) Tj ET\n")
+    widget = pdf.make_indirect(pikepdf.Dictionary({
+        "/Type": pikepdf.Name.Annot,
+        "/Subtype": pikepdf.Name.Widget,
+        "/FT": pikepdf.Name.Tx,
+        "/T": pikepdf.String("Full Name"),
+        "/Rect": pikepdf.Array([72, 600, 300, 620]),
+    }))
+    page.obj["/Annots"] = pikepdf.Array([widget])
+    input_path = tmp_path / "form.pdf"
+    pdf.save(str(input_path))
+    pdf.close()
+
+    els = [TaggedElement(element_id="p1_c0", page_num=1, pdf_tag=PDFTag.P, text="Form",
+                         bbox=(72, 40, 300, 60), merged_from=["p1_c0", "p1_c1", "p1_c2", "p1_c3"])]
+    out_path = tmp_path / "form_out.pdf"
+    tag_untagged_pdf(str(input_path), str(out_path), els, total_pages=1)
+
+    with pikepdf.open(str(out_path)) as o:
+        # collect every /S in the struct tree
+        s_tags = []
+        objr_targets = []
+        def walk(n):
+            if isinstance(n, pikepdf.Dictionary):
+                if n.get("/S") is not None:
+                    s_tags.append(str(n.get("/S")))
+                if str(n.get("/Type", "")) == "/OBJR" and n.get("/Obj") is not None:
+                    objr_targets.append(n["/Obj"])
+                if n.get("/K") is not None:
+                    walk(n.get("/K"))
+            elif isinstance(n, pikepdf.Array):
+                for x in n:
+                    walk(x)
+        walk(o.Root.StructTreeRoot.K)
+        assert "/Form" in s_tags, f"expected a /Form struct element, got {s_tags}"
+        # the widget annotation now carries a StructParent and an accessible name
+        w = o.pages[0].obj["/Annots"][0]
+        assert w.get("/StructParent") is not None, "widget missing /StructParent"
+        assert str(w.get("/TU")) == "Full Name", f"expected /TU backfilled from /T, got {w.get('/TU')}"
+        # the /Form's OBJR points at the widget
+        assert any(t.objgen == w.objgen for t in objr_targets), "/Form OBJR does not target the widget"
+
+
+def test_bare_url_text_autolinked(tmp_path):
+    """Bare URL / email TEXT with no existing link annotation must be auto-detected
+    and turned into a functional /Link annotation (/A /URI) which then gets a /Link
+    struct element. Regression guard for the link auto-detection gap (incumbent-
+    baseline coverage: mean per-doc link recall was 0.06 — we only tagged pre-existing
+    annotations). Whole-token match must NOT link ordinary prose words."""
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(612, 792))
+    # standard Helvetica so pdfplumber can extract words from the content stream
+    font = pdf.make_indirect(pikepdf.Dictionary({
+        "/Type": pikepdf.Name.Font, "/Subtype": pikepdf.Name.Type1,
+        "/BaseFont": pikepdf.Name.Helvetica}))
+    page.obj["/Resources"] = pikepdf.Dictionary({"/Font": pikepdf.Dictionary({"/F1": font})})
+    page.obj["/Contents"] = pdf.make_stream(
+        b"BT /F1 12 Tf 72 700 Td (Email us at info@example.org or visit https://example.com today) Tj ET\n")
+    input_path = tmp_path / "urls.pdf"
+    pdf.save(str(input_path))
+    pdf.close()
+
+    els = [TaggedElement(element_id="p1_c0", page_num=1, pdf_tag=PDFTag.P,
+                         text="Email us at info@example.org or visit https://example.com today",
+                         bbox=(72, 80, 540, 100), merged_from=[f"p1_c{i}" for i in range(60)])]
+    out_path = tmp_path / "urls_out.pdf"
+    tag_untagged_pdf(str(input_path), str(out_path), els, total_pages=1)
+
+    with pikepdf.open(str(out_path)) as o:
+        link_uris = []
+        for a in (o.pages[0].obj.get("/Annots", []) or []):
+            if str(a.get("/Subtype")) == "/Link" and a.get("/A") is not None:
+                u = a["/A"].get("/URI")
+                if u is not None:
+                    link_uris.append(str(u))
+        s_tags = []
+        def walk(n):
+            if isinstance(n, pikepdf.Dictionary):
+                if n.get("/S") is not None:
+                    s_tags.append(str(n.get("/S")))
+                if n.get("/K") is not None:
+                    walk(n.get("/K"))
+            elif isinstance(n, pikepdf.Array):
+                for x in n:
+                    walk(x)
+        walk(o.Root.StructTreeRoot.K)
+
+    assert "https://example.com" in link_uris, f"URL not auto-linked: {link_uris}"
+    assert "mailto:info@example.org" in link_uris, f"email not auto-linked: {link_uris}"
+    assert s_tags.count("/Link") >= 2, f"expected >=2 /Link struct elems, got {s_tags}"
+    # ordinary words ("Email", "visit", "today") must NOT become links
+    assert not any(u in ("Email", "visit", "today") for u in link_uris)
