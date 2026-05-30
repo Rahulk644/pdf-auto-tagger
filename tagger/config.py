@@ -206,12 +206,19 @@ class TableConfig:
     # Structure-model tier in the extract_table_native cascade (lattice -> MODEL
     # -> text). env TAGGER_TABLE_ENGINE:
     #   "tableformer" — Docling TableFormer (default; current behaviour)
-    #   "slanet"      — SLANet via rapid_table (ONNX image->HTML). Measured
-    #                   better on a dp-bench single-table TEDS A/B (0.843 vs
-    #                   0.750) and rescues TableFormer's 0.000 collapses; opt-in
-    #                   until a full-corpus TEDS run promotes it to default.
+    #   "slanet"      — SLANet-plus via rapid_table (ONNX image->HTML, 7.4MB,
+    #                   CPU-fast). Beat TableFormer on a dp-bench TEDS A/B (0.843
+    #                   vs 0.750) and rescues its 0.000 collapses.
+    #   "ppstructure" — PP-Structure EN via rapid_table (ONNX, comparable to SLANet).
+    #   "unitable"    — UniTable via rapid_table (torch backend, ~480MB, more
+    #                   accurate but heavier — load in its own process to avoid OOM).
+    # DEFAULT = ppstructure: it won the full-corpus TEDS-S bench (0.906 vs
+    # TableFormer v1 0.839) and, wired with native-text fill + TH headers,
+    # produces veraPDF-compliant accessible tables. Self-gates to TableFormer if
+    # rapid_table is unavailable (the cascade falls through). Set =tableformer to
+    # restore the legacy engine.
     engine: str = field(default_factory=lambda: os.environ.get(
-        "TAGGER_TABLE_ENGINE", "tableformer"))
+        "TAGGER_TABLE_ENGINE", "ppstructure"))
 
     # Use pdfplumber for native PDFs
     use_pdfplumber_for_native: bool = True
