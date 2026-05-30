@@ -32,7 +32,7 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 ## 2. The check stack — where we pass, where we choke
 
 - **Level 1 — Syntax** (well-formed tree, MarkInfo, ParentTree, MCID consistency, /AF, valid refs): **SOLID.** veraPDF UA-1 compliant, CI-gated (`scripts/verapdf_gate.py`). Not a choke point.
-- **Level 2 — Structure** (no heading skips, first=H1, L>LI>Lbl+LBody, TR>TH/TD, no empty/punct headings, every Figure has /Alt): **SOLID.** Stage 8a′ + 8f enforcers; auditor (`tagger/audit/act_rules.py`) validated against the independent veraPDF-corpus.
+- **Level 2 — Structure** (no heading skips, first=H1, L>LI>Lbl+LBody, TR>TH/TD, no empty/punct headings, every Figure has /Alt): **GUARANTEED for the enumerated conformance rules** — Stage 8a′/8f are *deterministic post-processors* that force the output to satisfy them, and the auditor (validated vs the independent veraPDF-corpus) confirms it. **NOT a blanket 100%**, because (a) structural *correctness* depends on upstream detection being right — a mis-detected list is "valid /L" but wrong; the enforcer guarantees the rule, not the truth; and (b) our enforced rule-set is a *subset* of all Matterhorn structural checkpoints. To close: expand enforcer coverage (Matterhorn/Isartor) + fix structure-flattening shortcuts (the table span-deletion). See build queue.
 - **Level 3 — Semantics** (correct tag for meaning, logical order, meaningful alt, figure-vs-text judgment): **THE FRONTIER — where every remaining gap lives.** Machine-uncheckable; this is why the incumbent still uses human remediators.
 
 ---
@@ -111,6 +111,18 @@ P, H1–H6, L/LI/Lbl/LBody, Table/TR/TH/TD, Figure, Formula (+MathML /AF, opt-in
 ### NEXT (immediate · deterministic · measured)
 1. **Validate alt-text VLM on data charts** — chart-heavy sample to confirm it conveys values WITHOUT hallucinating (the unproven high-risk case).
 2. **Alt-text quality** (the genuine semantic hole) — scoreboard current corpus alt-text vs the McGowan rubric, then the document-context VLM upgrade on Modal.
+
+### ACTIVE BUILD QUEUE (next, in order — scoreboard-first, one at a time)
+1. **Complex tables (colspan/rowspan + hierarchical TH)** — undo the Stage-10 span-deletion shortcut (`_normalize_table_columns` currently *deletes* `/ColSpan`/`/RowSpan` to pass veraPDF's column count, flattening merged cells); emit spans correctly + pad effective columns + `/Scope`+Headers/IDs. Multiple table models available (`tableformer` default; `ppstructure`/`slanet`/`unitable` via `TAGGER_TABLE_ENGINE`). Measure on TEDS (FinTabNet/PubTabNet span GT) + the in-folder `RotateSimpleTable` test.
+2. **Multi-column / floating reading order** — deterministic column-gutter detection → per-column XY-cut, then a reading-order model (gated). Test on the in-folder `FOMC tealbook` (dense multi-column) + STEM lectures. Biggest STEM lever. Measure on NID.
+3. **Font: ToUnicode synthesis** (1-click deterministic repair) + **pre-flight triage gate** (encrypted/corrupt/XFA) + **signed-doc denominator exclusion** (honest pass-%).
+4. **Heading + typography signals** — weight Heron visual signal + positional cues for inconsistent typography; check whether the typography heuristic should also gate Caption/Quote/List scopes (not only headings).
+
+### TEST CORPORA & DATASETS (IP-clean inputs from the intel folder; vendor not referenced)
+- **Structural stressors** (real PDFs, document test-inputs): `FOMC tealbook` (multi-column), `RotateSimpleTable` (rotated table), STEM cancer lectures, erosion manual, semi-annual report.
+- **Color-contrast dataset** (`CCA files/Color Contrast all cases.pdf` + `colorfiles.zip`) — for the deferred color-contrast checker (we have an integration hook only).
+- **Font / Unicode test inputs** (`pdf_fonts_report`, `fonts_report.json`, `unicodefiles`) — for the ToUnicode/CIDSet repairs. (A CMap-patcher script in the folder is REFERENCE-ONLY — approach, not code; not copied.)
+- **Avoid (IP-tainted):** the incumbent's `doclayout*.mar` layout models and internal docs (tickets/roster/pipeline diagram) — not used or derived from.
 
 ### PLANNED (will do · needs GPU or larger work · scoreboard-gated)
 - **Alt-text quality** → document-context VLM (Gemma-E4B on Modal) scored vs the McGowan rubric — turns "blue bars" into "Q3 revenue $2M→$5M". *(the genuine semantic hole; Modal earns its spend here)*
