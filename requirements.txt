@@ -29,5 +29,11 @@ numpy==2.4.6
 # Groq-hosted Llama; lazily imported, only needed when running the judge.
 groq
 
+# Optional: SLANet table engine (TAGGER_TABLE_ENGINE=slanet). ONNX image->HTML
+# table structure (no paddle/torch); lazily imported. rapidocr is rapid_table's
+# self-OCR backend.
+rapid_table
+rapidocr
+
 # Test runner
 pytest==9.0.3

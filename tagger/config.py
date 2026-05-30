@@ -203,6 +203,16 @@ LAYOUT = LayoutConfig()
 class TableConfig:
     """Table extraction settings."""
 
+    # Structure-model tier in the extract_table_native cascade (lattice -> MODEL
+    # -> text). env TAGGER_TABLE_ENGINE:
+    #   "tableformer" — Docling TableFormer (default; current behaviour)
+    #   "slanet"      — SLANet via rapid_table (ONNX image->HTML). Measured
+    #                   better on a dp-bench single-table TEDS A/B (0.843 vs
+    #                   0.750) and rescues TableFormer's 0.000 collapses; opt-in
+    #                   until a full-corpus TEDS run promotes it to default.
+    engine: str = field(default_factory=lambda: os.environ.get(
+        "TAGGER_TABLE_ENGINE", "tableformer"))
+
     # Use pdfplumber for native PDFs
     use_pdfplumber_for_native: bool = True
 
