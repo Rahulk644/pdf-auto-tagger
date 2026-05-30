@@ -470,11 +470,27 @@ class PipelineConfig:
     flask_port: int = 5002  # 5001 is PREP-QA-Tool
     flask_debug: bool = False
 
-    # Structural-repair gating (see stage10_writeback/repair_gate.py). Additive
-    # tagging always runs; these control only the source-modifying font repairs.
+    # ---- Remediation policy ------------------------------------------------
+    # POLICY: adding STRUCTURE (the tag tree, /Alt, MathML, reading order) is our
+    # core function and always runs — that's what makes a doc accessible and it
+    # never alters how the page looks. Anything that modifies the SOURCE document
+    # (embedding/substituting fonts, changing colours for contrast, rewriting
+    # content) is OFF by default and only applied when the user opts in — we
+    # detect-and-report such issues, we don't silently change the document.
+    #
+    # The two halves:
+    #   DETECT (always on, non-modifying): tagger/audit/ (act_rules, matterhorn,
+    #     screen_reader) report what's wrong without touching the file.
+    #   FIX (opt-in, gated): source-modifying remediations run only when enabled.
+    #
+    # Structural-repair gating (see stage10_writeback/repair_gate.py) for the
+    # font repairs that DO exist today:
     #   "auto"      — apply all modifying repairs (default; differentiator vs PREP)
     #   "confirm"   — apply only repairs whose finding_id is in repair_approval_file
     #   "flag-only" — never apply; only report them
+    # Opt-in fixers for the currently detect-only axes (font embedding, colour
+    # contrast, table-header promotion, descriptive link text) are added behind
+    # their own off-by-default flags as they land — never auto-applied.
     repair_mode: str = "auto"
     repair_approval_file: Path | None = None
 

@@ -139,11 +139,14 @@ def linearize(path: str) -> Transcript:
                     walk(c)
                 return
             if s == "/Link":
+                # Link visible text usually lives in MCID-backed content, which
+                # this /ActualText-based walk can't see — so DON'T treat empty
+                # text as a defect (that's a linearizer blind spot, not a real
+                # one). Only flag text we CAN see that's a known-bad phrase.
                 txt = _txt(node)
+                bad = txt.strip().lower() in ("click here", "here", "link", "read more", "more")
                 t.announcements.append(Announcement(
-                    "link", txt,
-                    issue="" if txt and txt.lower() not in ("click here", "here", "link")
-                    else "non-descriptive link text"))
+                    "link", txt, issue="non-descriptive link text" if bad else ""))
                 return
             if s in ("/P", "/Caption", "/Note", "/LI", "/LBody", "/Lbl", "/TD", "/TH",
                      "/BlockQuote", "/Quote", "/Reference", "/Code", "/TOCI"):
