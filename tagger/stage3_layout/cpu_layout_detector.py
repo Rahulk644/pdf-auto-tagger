@@ -157,12 +157,18 @@ def _merge_table_boxes(pdf_path: str, page_num: int, lattice_boxes: list[tuple])
 def _merge_docling_headings(pdf_path: str, page_num: int,
                             existing: list[tuple],
                             tboxes: list[tuple],
-                            iboxes: list[tuple]) -> list[tuple]:
+                            iboxes: list[tuple],
+                            raw: list[tuple] | None = None) -> list[tuple]:
     """Union pdfplumber-detected heading lineboxes with Heron's semantic Title /
     Section-header detections. Drops Heron candidates that overlap any existing
     heading (IoU>0.3) or any table/image bbox (heading should be its own line,
-    not embedded in a table or figure). Never removes an existing heading."""
-    raw = _region_detect_all(pdf_path, page_num)
+    not embedded in a table or figure). Never removes an existing heading.
+
+    `raw` is the shared per-page region list (from _region_detect_all) so the
+    three native-path merges run ONE Heron inference between them; None = fetch
+    (keeps the helper usable standalone / in tests)."""
+    if raw is None:
+        raw = _region_detect_all(pdf_path, page_num)
     if not raw:
         return existing
     out = list(existing)
@@ -184,14 +190,17 @@ def _merge_docling_headings(pdf_path: str, page_num: int,
 
 
 def _merge_docling_formulas(pdf_path: str, page_num: int,
-                            blockers: list[tuple]) -> list[tuple]:
+                            blockers: list[tuple],
+                            raw: list[tuple] | None = None) -> list[tuple]:
     """Heron-detected Formula regions on a NATIVE page as [(bbox150, FORMULA), ...].
     The pdfplumber path has no formula signal, so display equations would
     otherwise be grouped into a /P Text block — Stage 9/10 then can't attach
     MathML. Additive + guarded: drop any Heron formula overlapping an existing
     table/image/heading (IoU>0.3) so we never reclassify a real region. Feeds
-    the PDF/UA-2 MathML Associated File on the /Formula element."""
-    raw = _region_detect_all(pdf_path, page_num)
+    the PDF/UA-2 MathML Associated File on the /Formula element. `raw` = shared
+    per-page region list (None = fetch); see _merge_docling_headings."""
+    if raw is None:
+        raw = _region_detect_all(pdf_path, page_num)
     if not raw:
         return []
     out = []
@@ -204,12 +213,17 @@ def _merge_docling_formulas(pdf_path: str, page_num: int,
     return out
 
 
-def _merge_docling_tables(pdf_path: str, page_num: int, lattice_boxes: list[tuple]) -> list[tuple]:
+def _merge_docling_tables(pdf_path: str, page_num: int, lattice_boxes: list[tuple],
+                          raw: list[tuple] | None = None) -> list[tuple]:
     """Augment lattice tables with Docling-layout-detected ones. Docling's layout
     model has 17 distinct categories so heading/text regions are NEVER classified
     as 'Table' — only genuine tables come out, no false-positives on prose. Dedupe
-    by IoU>0.5 (lattice box wins on overlap; its bbox is tighter for ruled grids)."""
-    docling_boxes = _region_detect_tables(pdf_path, page_num)
+    by IoU>0.5 (lattice box wins on overlap; its bbox is tighter for ruled grids).
+    `raw` = shared per-page region list (None = fetch via the table-only call)."""
+    if raw is not None:
+        docling_boxes = [b for b, lbl in raw if lbl == "Table"]
+    else:
+        docling_boxes = _region_detect_tables(pdf_path, page_num)
     if not docling_boxes:
         return lattice_boxes
     merged = list(lattice_boxes)
@@ -383,6 +397,11 @@ def detect_regions(pdf_path: str, page_num: int,
             return []
         page = pdf.pages[page_num - 1]
         page_h = page.height * _SCALE
+        # ONE Heron inference for the whole native page — the table / heading /
+        # formula merges below all filter this shared list instead of each
+        # re-rendering the page and re-running the model (was 3x render + 3x
+        # inference per page on the dominant stage).
+        raw_regions = _region_detect_all(pdf_path, page_num)
         tboxes = _table_boxes(page)
         # Augment with Docling-detected tables (borderless: lattice misses them).
         # Docling layout has 17 distinct classes (Text, Section-header, Table, ...),
@@ -390,7 +409,7 @@ def detect_regions(pdf_path: str, page_num: int,
         # which structurally rules out the false-positive failure mode TATR has
         # (TATR's binary table-or-not DETR cratered NID/MHS on docs 001-004/048/159).
         # No-op when docling_ibm_models / weights are unavailable.
-        tboxes = _merge_docling_tables(pdf_path, page_num, tboxes)
+        tboxes = _merge_docling_tables(pdf_path, page_num, tboxes, raw=raw_regions)
         iboxes = _image_boxes(page, big_image_threshold=big_image_thr)
         hboxes = _heading_lineboxes(page, tboxes, iboxes)  # [(bbox150, category)]
         # Additive Heron-detected headings on native pages — closes the
@@ -399,12 +418,14 @@ def detect_regions(pdf_path: str, page_num: int,
         # subsection titles, bold-at-body-size headings, etc). UNION only —
         # never removes a pdfplumber-detected heading, so this is strictly
         # accuracy-positive: max possible TEDS/NID regression = 0.
-        hboxes = _merge_docling_headings(pdf_path, page_num, hboxes, tboxes, iboxes)
+        hboxes = _merge_docling_headings(pdf_path, page_num, hboxes, tboxes, iboxes,
+                                         raw=raw_regions)
         # Additive Heron-detected display formulas — gives Stage 9/10 a /Formula
         # region to attach PDF/UA-2 MathML to (additive, dedupes against
         # table/image/heading boxes, so it can't reclassify a real region).
         fboxes = _merge_docling_formulas(
-            pdf_path, page_num, tboxes + iboxes + [b for b, _ in hboxes])
+            pdf_path, page_num, tboxes + iboxes + [b for b, _ in hboxes],
+            raw=raw_regions)
 
     # headings come from the pdfplumber-line path; exclude their elements from body
     # blocks (Stage 4 still matches them into the heading region by bbox). Formula
