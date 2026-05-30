@@ -170,6 +170,72 @@ def _try_unimernet(
     return None
 
 
+def find_latexocr_python() -> str | None:
+    """Locate a Python with rapid_latex_ocr (the onnx image→LaTeX recogniser).
+    Order: env TAGGER_LATEXOCR_PYTHON, then ~/.tagger/latexocr_venv. rapid_latex_ocr
+    caps at Python<3.13 so it can't live in the main py3.14 venv — it runs in an
+    isolated venv via subprocess. Returns None (→ graceful text fallback) if absent."""
+    candidates = [
+        os.environ.get("TAGGER_LATEXOCR_PYTHON"),
+        str(Path.home() / ".tagger" / "latexocr_venv" / "bin" / "python"),
+    ]
+    for py_bin in candidates:
+        if py_bin and os.path.exists(py_bin):
+            try:
+                r = subprocess.run(
+                    [py_bin, "-c", "import rapid_latex_ocr; print('ok')"],
+                    capture_output=True, text=True, timeout=20,
+                )
+                if r.returncode == 0 and "ok" in r.stdout:
+                    return py_bin
+            except Exception:
+                pass
+    return None
+
+
+def batch_rapid_latex(image_paths: list[str], py_bin: str | None = None) -> dict[str, str]:
+    """Image→LaTeX for many formula crops in ONE subprocess (LaTeXOCR loaded once —
+    a doc can have 100+ formulas, so per-crop spawning is infeasible). Returns
+    {image_path: latex}; missing/failed crops are omitted (caller keeps text-layer
+    LaTeX for those). Pure graceful: empty dict if the recogniser venv is absent."""
+    if not image_paths:
+        return {}
+    py_bin = py_bin or find_latexocr_python()
+    if py_bin is None:
+        return {}
+    manifest = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump(image_paths, manifest)
+    manifest.close()
+    out_path = manifest.name + ".out"
+    script = (
+        "import sys, json\n"
+        "from rapid_latex_ocr import LaTeXOCR\n"
+        "ocr = LaTeXOCR()\n"
+        "paths = json.load(open(sys.argv[1]))\n"
+        "res = {}\n"
+        "for p in paths:\n"
+        "    try:\n"
+        "        with open(p, 'rb') as f: data = f.read()\n"
+        "        latex, _ = ocr(data)\n"
+        "        if latex and latex.strip(): res[p] = latex.strip()\n"
+        "    except Exception: pass\n"
+        "json.dump(res, open(sys.argv[2], 'w'))\n"
+    )
+    try:
+        # ~0.1-0.4s/crop on CPU + one-time model load; scale timeout with count.
+        subprocess.run([py_bin, "-c", script, manifest.name, out_path],
+                       capture_output=True, text=True, timeout=60 + 2 * len(image_paths))
+        if os.path.exists(out_path):
+            return json.load(open(out_path))
+    except Exception as e:
+        logger.warning("rapid_latex_ocr batch failed: %s", e)
+    finally:
+        for p in (manifest.name, out_path):
+            if os.path.exists(p):
+                os.unlink(p)
+    return {}
+
+
 def _find_unimernet_python() -> str | None:
     """Find a Python with unimernet installed."""
     import sys

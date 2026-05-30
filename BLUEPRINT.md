@@ -164,7 +164,7 @@ Conformance (valid/present) is self-scored fully (veraPDF/ACT/Matterhorn/intrins
 
 ## 5. What's parked / opt-in
 
-- **Image→LaTeX formula recogniser** (`vlm` mode) — needs an isolated venv (pix2tex/UniMERNet pins conflict with the main venv → subprocess-only). The MathML substrate ships regardless.
+- **Image→LaTeX formula recogniser** (`vlm` mode) — IMPLEMENTED via `rapid_latex_ocr` (onnx, no torch/timm) in an isolated py3.11 venv (`~/.tagger/latexocr_venv`; the package caps at Python<3.13 so it can't share the py3.14 main venv). Crops are batched into one subprocess per doc; opt-in, graceful no-op to text. Measured real-LaTeX 19%→54% on arXiv STEM, veraPDF UA-1 still PASS. The text-layer default flattens ~76% of born-digital formulas to structure-less `\text{}` — this recovers structure for STEM docs.
 - **Semantic-correctness judge** — deterministic perception + text-only quantized LLM (llama.cpp on M1, OpenVINO on x86 prod); the real "automated semantics" engine, not yet built.
 - **Type-routed alt-text upgrade** — SigLIP bucket + OCR'd labels + value-safe template for data-bearing figures (small VLMs unreliable here per the pilot).
 - **PicoDet layout backend** — A/B-evaluated, not default (lost MHS gate, ~50% slower on CPU); retained for re-eval.

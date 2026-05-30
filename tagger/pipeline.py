@@ -600,11 +600,21 @@ class AutoTaggerPipeline:
         """Stage 4+5: Route regions and create initial tagged elements."""
         logger.info("[Stage 4+5] Routing and initial tagging...")
 
+        import os, tempfile
         from tagger.stage4_router.content_router import route_page, diagnose_page
         from tagger.stage5_specialists.table_extractor import extract_table_native
-        from tagger.stage5_specialists.formula_extractor import extract_formula
+        from tagger.stage5_specialists.formula_extractor import (
+            extract_formula, find_latexocr_python, batch_rapid_latex,
+        )
         from tagger.stage5_specialists.mathml_emitter import latex_to_mathml
         from tagger.models.data_types import LayoutCategory
+        from tagger.config import FORMULA as _FORMULA
+
+        # Image→LaTeX recogniser (opt-in, TAGGER_FORMULA_RECOGNIZER=vlm). Resolve the
+        # isolated rapid_latex_ocr venv ONCE; crops are batched into a single
+        # subprocess after the page loop (a STEM doc has 100+ formulas).
+        _latex_py = find_latexocr_python() if _FORMULA.recognizer == "vlm" else None
+        _formula_jobs: list = []  # (element, crop_png_path)
 
         total_tagged = 0
         for page_num, page_data in doc_data.pages.items():
@@ -647,18 +657,15 @@ class AutoTaggerPipeline:
                 r for r in page_data.layout_regions
                 if r.category == LayoutCategory.FORMULA
             ]
-            # Image→LaTeX recogniser is opt-in (TAGGER_FORMULA_RECOGNIZER=vlm) and
-            # runs in an isolated subprocess; render the page once if enabled.
-            from tagger.config import FORMULA as _FORMULA
-            page_img = None
-            if formula_regions and _FORMULA.recognizer == "vlm":
-                page_img = self._render_page_image(doc_data.input_path, page_num)
+            # Text-layer LaTeX baseline (keeps merged_from for Stage-10 MCID); the
+            # optional image→LaTeX upgrade is batched after the loop.
+            page_img = self._render_page_image(doc_data.input_path, page_num) \
+                if (formula_regions and _latex_py) else None
             for region in formula_regions:
                 for el in tagged:
                     if el.element_id != region.region_id:
                         continue
-                    fr = extract_formula(region, [el], page_image=page_img,
-                                         use_vlm=page_img is not None)
+                    fr = extract_formula(region, [el])
                     if fr and fr.latex:
                         mathml = latex_to_mathml(fr.latex, is_inline=fr.is_inline)
                         el.specialist_data = {
@@ -668,10 +675,40 @@ class AutoTaggerPipeline:
                         }
                         if mathml:
                             el.specialist_data["mathml"] = mathml
+                    if page_img is not None:  # queue crop for the batched recogniser
+                        x0, y0, x1, y1 = (int(v) for v in region.bbox)
+                        x0, y0 = max(0, x0), max(0, y0)
+                        x1, y1 = min(page_img.width, x1), min(page_img.height, y1)
+                        if x1 > x0 and y1 > y0:
+                            cf = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                            page_img.crop((x0, y0, x1, y1)).save(cf.name)
+                            cf.close()
+                            _formula_jobs.append((el, cf.name))
                     break
 
             page_data.tagged_elements = tagged
             total_tagged += len(tagged)
+
+        # Batched image→LaTeX upgrade (opt-in). A STEM doc has 100+ formulas and the
+        # text layer flattens ~76% to structure-less \text{}; recover real LaTeX in
+        # ONE subprocess (rapid_latex_ocr loaded once) and overwrite latex + MathML.
+        # Graceful: empty result (venv absent / failure) leaves the text baseline.
+        if _formula_jobs:
+            results = batch_rapid_latex([p for _, p in _formula_jobs], py_bin=_latex_py)
+            upgraded = 0
+            for el, p in _formula_jobs:
+                latex = results.get(p)
+                if latex:
+                    is_inline = (el.specialist_data or {}).get("is_inline", False)
+                    el.specialist_data = {**(el.specialist_data or {}), "latex": latex}
+                    mm = latex_to_mathml(latex, is_inline=is_inline)
+                    if mm:
+                        el.specialist_data["mathml"] = mm
+                    upgraded += 1
+                if os.path.exists(p):
+                    os.unlink(p)
+            logger.info("[Stage 5] image→LaTeX recogniser upgraded %d/%d formulas",
+                        upgraded, len(_formula_jobs))
 
         logger.debug("Created %d initially tagged elements.", total_tagged)
 

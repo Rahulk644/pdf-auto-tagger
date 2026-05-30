@@ -126,7 +126,7 @@ Two different questions, two different answers — don't conflate them:
 
 ## ⏳ Parked / opt-in
 
-- **Image→LaTeX formula recogniser** (`TAGGER_FORMULA_RECOGNIZER=vlm`) — needs an isolated venv (pix2tex/UniMERNet pins conflict with the main venv → subprocess-only). MathML substrate ships regardless.
+- **Image→LaTeX formula recogniser** (`TAGGER_FORMULA_RECOGNIZER=vlm`) — `rapid_latex_ocr` (onnx) in an isolated py3.11 venv (`~/.tagger/latexocr_venv`), batched per doc, opt-in, graceful no-op to text. Recovers real LaTeX for born-digital STEM formulas the text layer flattens to `\text{}` (measured 19%→54%). Default stays `text` (no throughput cost).
 - **PicoDet layout backend** (`TAGGER_LAYOUT_BACKEND=picodet`) — A/B-evaluated, NOT default (lost the MHS gate, ~50% slower on CPU); retained for re-eval.
 - **Color contrast (WCAG 1.4.3)** — separate repo; integration hook only.
 - **Remediation policy:** adding structure (tags/Alt/MathML/reading order) is always-on; modifying the *source* (fonts, contrast) is detect-and-report by default, opt-in/gated only.
