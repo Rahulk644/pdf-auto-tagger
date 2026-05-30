@@ -189,8 +189,11 @@ class ZeroCharElementRule(ValidationRule):
         return "zero_char_element"
 
     def check(self, element: TaggedElement, context: ValidationContext) -> ValidationResult | None:
-        # Figures don't need text
-        if element.pdf_tag in (PDFTag.FIGURE, PDFTag.ARTIFACT):
+        # Figures don't need text; TABLE carries its text in specialist_data["cells"]
+        # (el.text is empty by design), so the zero-char rule must NOT artifact it —
+        # that silently dropped fully-extracted tables (e.g. a 31×7 217-cell table)
+        # to /Artifact. Degenerate tables are handled by single_cell_table/empty_table.
+        if element.pdf_tag in (PDFTag.FIGURE, PDFTag.ARTIFACT, PDFTag.TABLE):
             return None
 
         if not element.text or not element.text.strip():
