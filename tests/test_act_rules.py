@@ -44,3 +44,40 @@ def test_auditor_zero_failures_on_our_own_output(tmp_path):
 def test_auditor_handles_missing_file_gracefully(tmp_path):
     rep = audit_pdf(str(tmp_path / "does_not_exist.pdf"))
     assert any(r.status == "fail" and r.rule_id == "io" for r in rep.results)
+
+
+# --- PDFUA-7.4.2 heading-hierarchy rules (validated against veraPDF-corpus 7.4.x) ---
+# Synthesize a minimal tagged struct tree with given heading tags so we can exercise
+# the failure modes the pipeline itself never produces (it emits valid hierarchies).
+def _audit_headings(tmp_path, tags):
+    import pikepdf
+    from pikepdf import Dictionary, Name, Array, String
+    pdf = pikepdf.new()
+    pdf.add_blank_page()
+    kids = [pdf.make_indirect(Dictionary(
+        Type=Name.StructElem, S=Name("/" + t), ActualText=String("x"))) for t in tags]
+    doc_el = pdf.make_indirect(Dictionary(Type=Name.StructElem, S=Name("/Document"),
+                                          K=Array(kids)))
+    pdf.Root.StructTreeRoot = pdf.make_indirect(
+        Dictionary(Type=Name.StructTreeRoot, K=doc_el))
+    pdf.Root.MarkInfo = Dictionary(Marked=True)
+    p = tmp_path / "h.pdf"
+    pdf.save(str(p))
+    rep = audit_pdf(str(p))
+    return next(r.status for r in rep.results if r.rule_id == "PDFUA-7.4.2")
+
+
+def test_heading_valid_hierarchy_passes(tmp_path):
+    assert _audit_headings(tmp_path, ["H1", "H2", "H3"]) == "pass"
+
+
+def test_heading_level_skip_fails(tmp_path):
+    assert _audit_headings(tmp_path, ["H1", "H2", "H4"]) == "fail"
+
+
+def test_heading_first_not_h1_fails(tmp_path):
+    assert _audit_headings(tmp_path, ["H2", "H3", "H4"]) == "fail"
+
+
+def test_heading_mixed_numbered_unnumbered_fails(tmp_path):
+    assert _audit_headings(tmp_path, ["H1", "H"]) == "fail"

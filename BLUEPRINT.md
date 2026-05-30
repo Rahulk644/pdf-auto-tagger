@@ -52,7 +52,7 @@ Separate from the tagging pipeline. Takes any tagged PDF (ours, PREP, PDFix, any
 ACT-6cfa84   /  WCAG 1.1.1   Figure has /Alt or /ActualText
 ACT-36b590   /  WCAG 1.3.1   Heading is non-empty
 ACT-b40fd1   /  WCAG 3.1.1   /Lang valid BCP-47 tag
-PDFUA-7.4.2  /  WCAG 1.3.1   No heading-level skips
+PDFUA-7.4.2  /  WCAG 1.3.1   Heading hierarchy: no skip, first=H1, no numbered/unnumbered mix
 PDFUA-7.1-10 /  WCAG 2.4.2   /Info /Title + /DisplayDocTitle = true
 PDFUA-7.5.2  /  WCAG 1.3.1   /Caption colocates with /Figure or /Table
 PDFUA-7.5.3  /  WCAG 1.3.1   /LI inside /L

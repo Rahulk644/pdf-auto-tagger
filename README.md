@@ -81,7 +81,7 @@ A read-only checker layer that scores any tagged PDF (ours, PREP, PDFix, anythin
 ACT-6cfa84   /  WCAG 1.1.1   Figure has /Alt or /ActualText
 ACT-36b590   /  WCAG 1.3.1   Heading is non-empty
 ACT-b40fd1   /  WCAG 3.1.1   Catalog /Lang is a valid BCP-47 tag
-PDFUA-7.4.2  /  WCAG 1.3.1   No heading-level skips
+PDFUA-7.4.2  /  WCAG 1.3.1   Heading hierarchy: no skip, first=H1, no numbered/unnumbered mix
 PDFUA-7.1-10 /  WCAG 2.4.2   /Info /Title set AND /DisplayDocTitle true
 PDFUA-7.5.2  /  WCAG 1.3.1   /Caption colocates with /Figure or /Table
 PDFUA-7.5.3  /  WCAG 1.3.1   Every /LI is inside /L

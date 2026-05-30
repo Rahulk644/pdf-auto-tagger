@@ -89,7 +89,8 @@ def audit_pdf(path: str) -> AuditReport:
         tag_counts: dict[str, int] = {}
         figures_missing_alt = 0
         empty_headings = 0
-        heading_sequence: list[str] = []
+        heading_sequence: list[str] = []   # numbered H1-H6 in document order
+        unnumbered_headings: list[str] = []  # unnumbered /H tags (PDF/UA allows H1-H6 XOR H)
         captions: list[Dictionary] = []
         lis_outside_l = 0
         figures_by_page: dict = {}
@@ -133,6 +134,8 @@ def audit_pdf(path: str) -> AuditReport:
                     tables_by_page.setdefault(_pg_id(node), []).append(node)
                 elif s in _HEADING_TAGS:
                     heading_sequence.append(s)
+                elif s == "/H":
+                    unnumbered_headings.append(s)
                     if is_heading_empty(node):
                         empty_headings += 1
                 elif s == "/Caption":
@@ -193,7 +196,13 @@ def audit_pdf(path: str) -> AuditReport:
                 "ACT-b40fd1", "Document language is valid BCP-47",
                 "pass", notes=f"/Lang = {lang_str}"))
 
-        # PDF/UA 7.4.2 — heading levels not skipped
+        # PDF/UA 7.4.2 — numbered heading hierarchy. Three failure modes (all
+        # WCAG 1.3.1 / PDF/UA-1 7.4.2, validated against veraPDF-corpus 7.4.x):
+        #   (1) level skip      — H1 -> H3
+        #   (2) first not H1    — sequence starts at H2/H3 (e.g. H2,H3,H4)
+        #   (3) mixed H + Hn    — a document must use EITHER numbered (H1-H6)
+        #                         OR unnumbered (/H) headings, never both.
+        problems = []
         skip_count = 0
         last_level = 0
         for s in heading_sequence:
@@ -201,15 +210,23 @@ def audit_pdf(path: str) -> AuditReport:
             if last_level > 0 and lvl > last_level + 1:
                 skip_count += 1
             last_level = lvl
-        if not heading_sequence:
+        if skip_count:
+            problems.append(f"{skip_count} level-skip(s)")
+        if heading_sequence and heading_sequence[0] != "/H1":
+            problems.append(f"first heading is {heading_sequence[0]} not /H1")
+        if heading_sequence and unnumbered_headings:
+            problems.append(f"mixes numbered + {len(unnumbered_headings)} unnumbered /H")
+        if not heading_sequence and not unnumbered_headings:
             rep.results.append(RuleResult(
-                "PDFUA-7.4.2", "No heading-level skips",
+                "PDFUA-7.4.2", "Heading hierarchy (no skip / first=H1 / no mix)",
                 "not_applicable", notes="no headings"))
         else:
+            seq = " ".join(heading_sequence) or f"{len(unnumbered_headings)}×/H"
             rep.results.append(RuleResult(
-                "PDFUA-7.4.2", "No heading-level skips",
-                "pass" if skip_count == 0 else "fail", detail=skip_count,
-                notes=f"sequence: {' '.join(heading_sequence)}"))
+                "PDFUA-7.4.2", "Heading hierarchy (no skip / first=H1 / no mix)",
+                "pass" if not problems else "fail", detail=len(problems),
+                notes=("; ".join(problems) + f" | sequence: {seq}") if problems
+                      else f"sequence: {seq}"))
 
         # PDF/UA 7.1-10 — /Info /Title set AND /DisplayDocTitle true.
         # The canonical /Info dict is in the trailer, NOT the catalog —
