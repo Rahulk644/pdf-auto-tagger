@@ -1,0 +1,102 @@
+name: CI
+
+# The deterministic conformance gate: the test suite must be green AND every
+# tagged fixture must pass the veraPDF PDF/UA-1 CLI. A change that makes the
+# tagging "look" better but fails veraPDF turns this red — that is the point.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TAGGER_LAYOUT_BACKEND: cpu
+      VERAPDF_REQUIRED: "1"
+      VERAPDF_CLI: /opt/verapdf/verapdf
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up Java (veraPDF is a JVM tool)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # ---- Python deps (cached) ----
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ---- Model weights (cached so we download them once) ----
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-v1-${{ runner.os }}
+
+      # ---- veraPDF CLI (headless IzPack auto-install) ----
+      - name: Cache veraPDF
+        id: cache-verapdf
+        uses: actions/cache@v4
+        with:
+          path: /opt/verapdf
+          key: verapdf-installer-v1
+
+      - name: Install veraPDF
+        if: steps.cache-verapdf.outputs.cache-hit != 'true'
+        run: |
+          curl -sL -o /tmp/verapdf-installer.zip https://software.verapdf.org/releases/verapdf-installer.zip
+          unzip -q /tmp/verapdf-installer.zip -d /tmp/verapdf-installer
+          cat > /tmp/auto-install.xml <<'XML'
+          <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+          <AutomatedInstallation langpack="eng">
+            <com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>
+            <com.izforge.izpack.panels.target.TargetPanel id="install_dir">
+              <installpath>/opt/verapdf</installpath>
+            </com.izforge.izpack.panels.target.TargetPanel>
+            <com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select">
+              <pack index="0" name="veraPDF GUI" selected="true"/>
+              <pack index="1" name="veraPDF Mac and *nix Scripts" selected="true"/>
+              <pack index="2" name="veraPDF Validation model" selected="true"/>
+              <pack index="3" name="veraPDF Documentation" selected="false"/>
+              <pack index="4" name="veraPDF Sample Files" selected="false"/>
+            </com.izforge.izpack.panels.packs.PacksPanel>
+            <com.izforge.izpack.panels.install.InstallPanel id="install"/>
+            <com.izforge.izpack.panels.finish.FinishPanel id="finish"/>
+          </AutomatedInstallation>
+          XML
+          INSTALLER_JAR=$(find /tmp/verapdf-installer -name '*installer*.jar' | head -1)
+          echo "Using installer: $INSTALLER_JAR"
+          java -jar "$INSTALLER_JAR" /tmp/auto-install.xml
+
+      - name: Verify veraPDF
+        run: $VERAPDF_CLI --version
+
+      # ---- Gates ----
+      - name: Test suite (CPU backend)
+        run: pytest -q
+
+      - name: veraPDF PDF/UA-1 conformance gate
+        run: python scripts/verapdf_gate.py

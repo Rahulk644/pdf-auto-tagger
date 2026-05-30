@@ -1,0 +1,29 @@
+# Runtime + test dependencies for the CPU-native pipeline (TAGGER_LAYOUT_BACKEND=cpu).
+# Pinned to the versions the suite + veraPDF gate are green on locally.
+# The mineru/GPU backend deps are intentionally NOT here — that path is Modal-only.
+
+# PDF I/O + extraction
+pikepdf==10.7.2
+pdfplumber==0.11.9
+PyMuPDF==1.27.2.3
+pillow==12.2.0
+
+# Layout + table + figure models (CPU)
+torch==2.12.0
+transformers==5.9.0
+docling-ibm-models==3.13.2
+docling-core==2.78.0
+
+# Scanned-page OCR (CPU, ONNX)
+rapidocr-onnxruntime==1.2.3
+
+# Tokenisation for SigLIP / alt-text
+sentencepiece==0.2.1
+
+# PDF/UA-2 formula MathML
+latex2mathml==3.81.0
+
+numpy==2.4.6
+
+# Test runner
+pytest==9.0.3
