@@ -41,7 +41,7 @@ PYTHONPATH=. python scratch/run_benchmark.py <benchmark_root> [--remediation-dir
 # dp-bench scoring (CPU/free)
 PYTHONPATH=. python scratch/run_dpbench.py --gt-dir <gt> --pred-dir <out> --out card.json
 
-# Run tests — LOCAL CPU BACKEND (full suite green, 275 passing, ~40s)
+# Run tests — LOCAL CPU BACKEND (full suite green, 299 passing, ~40s)
 TAGGER_LAYOUT_BACKEND=cpu pytest -q
 # single file / verbose:
 TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
@@ -60,7 +60,7 @@ TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
 | `TAGGER_ALT_TEXT_MODE` | `ALT_TEXT.mode` | `siglip` / `placeholder` / `vlm` | `siglip` | leave default unless reproducing the legacy review-required placeholders |
 | `TAGGER_OCR_QUALITY` | `OCR.quality` | `speed` / `balanced` / `quality` | `balanced` | `quality` for noisy scans |
 | `TAGGER_FORMULA_RECOGNIZER` | `FORMULA.recognizer` | `text` / `vlm` | `text` | `vlm` (image→LaTeX) needs an ISOLATED recogniser venv — pix2tex/UniMERNet pin old x-transformers/timm that conflict with the main venv; subprocess only, graceful no-op to `text` if absent |
-| `TAGGER_TABLE_ENGINE` | `TABLE.engine` | `tableformer` / `ppstructure` / `slanet` / `unitable` | `tableformer` | structure-model tier of the table cascade. `tableformer` (default) won END-TO-END (0.567 TEDS / 0.721 TEDS-S vs PP-Structure 0.552/0.717) despite PP-Structure winning the *isolated-crop* bench — the mature native-text-fill + cascade beat it in-pipeline. rapid_table engines (`ppstructure`/`slanet`/`unitable`) available for experimentation; `unitable` OOMs on 8GB |
+| `TAGGER_TABLE_ENGINE` | `TABLE.engine` | `tableformer` / `ppstructure` / `slanet` / `unitable` | `tableformer` | structure-model tier of the table cascade. `tableformer` (default) won END-TO-END despite PP-Structure winning the *isolated-crop* bench. A **neutral cross-dataset shootout** (PubTabNet, in-dist for PP/SLANet; FinTabNet, in-dist for TableFormer) confirmed the engine is NOT the bottleneck — every engine is 0.82–0.98 raw while the pipeline was 0.567 — so the table win came from fixing **integration** (native-text-fill), not swapping models: dp-bench TEDS 0.581 → **0.731**. rapid_table engines (`ppstructure`/`slanet`/`unitable`) available for experimentation; `unitable` OOMs on 8GB |
 
 ## Architecture
 
@@ -164,6 +164,10 @@ Stages 1/3/5 used to independently rasterize and re-open the same PDF. `page_cac
 
 **Table cells** are NOT `TaggedElement` instances — they live inside `el.specialist_data["cells"]` as dicts with keys `row_idx`, `col_idx`, `text`, `merged_from`, `is_header`, `is_row_header`. Stage 10 reads these directly to build `TR > TH/TD` structure.
 
+**Table cell-text fill (the TEDS 0.581 → 0.731 lever — see also `[[project-table-and-datasets-intel]]`):** a neutral PubTabNet+FinTabNet shootout proved the structure engine isn't the table bottleneck (all engines 0.82–0.98 raw, pipeline 0.567); a per-doc TEDS-vs-TEDS-S decomposition localized the loss as **native-text-fill** in two places, both now fixed:
+- `docling_table_extractor._build_cells_from_tf` — was strict "char-center *inside* the predicted cell bbox", which dropped chars whose center fell just outside TableFormer's approximate bbox (empty cells, clipped leading chars). Now **containment-then-nearest-cell** over the table-region char set — no in-region char is lost.
+- `struct_tree_writer` (Stage 10) — a cell whose chars got no MCID was **dropped from the row**, shifting later cells left and triggering an empty-`/TD` pad (column-shift that vanished real data). Now the cell is **emitted positionally with `/ActualText`** (same no-`/K` path as `merged_from`-empty elements below). veraPDF UA-1 stays compliant.
+
 ### Stage 10 BDC injection (`content_stream_writer.py`)
 
 `inject_bdc_markers` rewrites the page content stream entirely. It strips all existing `BDC`/`BMC`/`EMC` operators from the original stream (to prevent phantom MCID conflicts) then injects new `BDC`/`EMC` around text operators using `char_to_mcid` — a map from Stage-1 char index → MCID built from `merged_from` lists.
@@ -174,7 +178,7 @@ Stages 1/3/5 used to independently rasterize and re-open the same PDF. `page_cac
 
 Drop-in `LayoutModelAdapter` for Stage 3 that derives `LayoutRegion[]` from Stage-2 PageElements + pdfplumber primitives + Docling Heron. Branches on Stage-0 `page_type`:
 
-- **NATIVE** — pdfplumber lattice → tables; Docling-table merge (TableFormer adds borderless); `_heading_lineboxes` for headings from pdfplumber `extract_text_lines`; `_merge_docling_headings` adds Heron-detected Title/Section-header regions that pdfplumber missed (additive only); `_image_boxes` with the loose `0.7` page-area threshold; XY-cut reading order.
+- **NATIVE** — pdfplumber lattice → tables; Docling-table merge (TableFormer adds borderless); `_heading_lineboxes` for headings from pdfplumber `extract_text_lines`; `_merge_docling_headings` adds Heron-detected Title/Section-header regions that pdfplumber missed (additive only); `_image_boxes` with the loose `0.7` page-area threshold; XY-cut reading order. **Heading precision guards** in `_heading_lineboxes` (an arXiv `\section`-GT scoreboard showed the dominant MHS error is over-detection on borderless-table rows): `_looks_like_data_row` rejects digit-heavy multi-token lines (≥4 tokens, >50% digit-bearing — but keeps `GPT-4 Results`); `_suppress_dense_clusters` drops ≥4 tight same-size candidates (table/list rows, not a heading run); `_valid_heading_text` (no end-punct, not numeric-only, length cap) is the shared gate. A Heron-box→line text gate was tried and **reverted** (box→line resolution drops real headings: recall 0.78→0.52).
 - **MIXED / SCANNED** — Heron is the entire region source via `_detect_via_heron`. Page-spanning images (≥40% of page) are deliberately dropped — that's the page-image background of a scan, not a real Picture, and would otherwise `_center_inside`-block every OCR PageElement.
 
 ### Stage 1 scanned extractor (`tagger/stage1_extraction/scanned_extractor.py`)

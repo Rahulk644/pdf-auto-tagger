@@ -105,6 +105,29 @@ def _center_inside(box, others) -> bool:
     return any(o[0] <= cx <= o[2] and o[1] <= cy <= o[3] for o in others)
 
 
+_NUMERIC_ONLY_RE = re.compile(r"^[\d\s.,()%/–-]+$")
+
+
+def _valid_heading_text(txt: str) -> bool:
+    """Text-quality gate for a heading candidate. Single source of truth shared by
+    BOTH the pdfplumber line path (_heading_lineboxes) and the Heron-additive path
+    (_merge_docling_headings) — the latter previously bypassed it, letting captions,
+    run-in sentences (end in '.'), and appendix code/prompt lines masquerade as
+    headings (the precision leak the heading scoreboard exposed). Rules:
+      short:   0 < len <= _MAX_HEAD_LEN  (headings aren't paragraphs)
+      no_end:  last char not in .,;:     (run-in sentences/captions end punctuated)
+      not_num: not a bare numeric/symbol run ('1.2', '(4)', '%')
+    """
+    txt = (txt or "").strip()
+    if not (0 < len(txt) <= _MAX_HEAD_LEN):
+        return False
+    if txt[-1] in ".,;:":
+        return False
+    if _NUMERIC_ONLY_RE.match(txt):
+        return False
+    return True
+
+
 def _body_size(sizes) -> float:
     rounded = [round(s * 2) / 2 for s in sizes if s]
     return statistics.mode(rounded) if rounded else 0.0
@@ -162,6 +185,15 @@ def _merge_docling_headings(pdf_path: str, page_num: int,
     Section-header detections. Drops Heron candidates that overlap any existing
     heading (IoU>0.3) or any table/image bbox (heading should be its own line,
     not embedded in a table or figure). Never removes an existing heading.
+
+    NOTE (heading-scoreboard diagnosis, arXiv N=3 controlled): a text-quality gate
+    was trialled here (resolve the pdfplumber line under the Heron box, reject
+    run-in/caption/numeric) but REVERTED — box→line resolution is a spatial-to-
+    logical impedance mismatch (a Section-header box overruns into the paragraph
+    below, the dominant line resolves to body text, real headings get dropped:
+    recall 0.78→0.52 for ~0 precision gain). The real precision leak is upstream:
+    _heading_lineboxes firing on the rows of borderless tables Heron's Table boxes
+    don't fully cover. Fix that, not this.
 
     `raw` is the shared per-page region list (from _region_detect_all) so the
     three native-path merges run ONE Heron inference between them; None = fetch
@@ -267,6 +299,54 @@ def _classify_margin(el: PageElement, page_h: float) -> LayoutCategory | None:
     return None
 
 
+# Heading precision guards (arXiv scoreboard diagnosis: the dominant MHS leak is
+# _heading_lineboxes firing on borderless-TABLE rows Heron's Table boxes don't
+# cover — p12 emitted 20 spurious TITLE/SECT = table data/header rows + captions).
+_NUMTOK_RATIO = 0.5        # >this fraction of digit-bearing tokens => data row, not heading
+_NUMTOK_MIN = 4            # ...only when the line has >= this many tokens (protects "GPT-4 Results")
+_CLUSTER_MIN = 4           # >= this many tight same-size candidates in a run => table/list, not headings
+_CLUSTER_GAP = 1.0         # consecutive candidates within this * body gap count as one tight run
+_LEAD_NUM_RE = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
+
+
+def _numeric_token_ratio(txt: str) -> float:
+    """Fraction of whitespace tokens that carry a digit, after stripping a leading
+    section number. A table data row ('Amazon 1.04M 9.44M 18.2 4 5 ...') scores high;
+    a real heading ('Experimental Results') scores 0."""
+    t = _LEAD_NUM_RE.sub("", txt)
+    toks = t.split()
+    if not toks:
+        return 0.0
+    return sum(1 for w in toks if any(c.isdigit() for c in w)) / len(toks)
+
+
+def _looks_like_data_row(txt: str) -> bool:
+    toks = _LEAD_NUM_RE.sub("", txt).split()
+    return len(toks) >= _NUMTOK_MIN and _numeric_token_ratio(txt) > _NUMTOK_RATIO
+
+
+def _suppress_dense_clusters(cands: list, body: float) -> list:
+    """Drop runs of >= _CLUSTER_MIN candidates stacked tightly (gap < _CLUSTER_GAP*body)
+    at the same font size — those are borderless-table rows or list items, never a
+    real heading sequence (real headings are sparse, separated by body text). cands =
+    [(bbox, cat, size, top, bottom), ...] already in reading order."""
+    if not body or len(cands) < _CLUSTER_MIN:
+        return cands
+    keep = [True] * len(cands)
+    i = 0
+    while i < len(cands):
+        j = i + 1
+        while (j < len(cands)
+               and abs(cands[j][2] - cands[i][2]) <= 0.5            # same size bucket
+               and (cands[j][3] - cands[j - 1][4]) < _CLUSTER_GAP * body):  # tight gap
+            j += 1
+        if j - i >= _CLUSTER_MIN:                                   # a dense run
+            for k in range(i, j):
+                keep[k] = False
+        i = j
+    return [c for c, k in zip(cands, keep) if k]
+
+
 def _line_size_bold(ln) -> tuple[float, bool]:
     chars = ln.get("chars", [])
     sizes = [c.get("size") for c in chars if c.get("size")]
@@ -292,7 +372,7 @@ def _heading_lineboxes(page, tboxes, iboxes) -> list[tuple]:
     body = _body_size([sz for ln, sz, _, c, _ in info if sz and not _center_inside(
         (c[0], c[1], c[0], c[1]), blockers)])
 
-    out = []
+    cands = []  # (bbox, cat, size, top150, bottom150) — collected then cluster-filtered
     prev_bottom = None
     for ln, sz, bold, center, bbox in info:
         gap_above = (ln["top"] - prev_bottom) if prev_bottom is not None else 1e9
@@ -300,18 +380,20 @@ def _heading_lineboxes(page, tboxes, iboxes) -> list[tuple]:
         if _center_inside((center[0], center[1], center[0], center[1]), blockers):
             continue
         txt = ln["text"].strip()
-        short = 0 < len(txt) <= _MAX_HEAD_LEN
-        no_end = bool(txt) and txt[-1] not in ".,;:"
-        not_num = not re.match(r"^[\d\s.,()%/–-]+$", txt)
         # gap_above, ln sizes and body are all pdfplumber points — consistent.
         big = bool(body) and sz >= body * _BIG_RATIO
         bold_block = (bool(body) and bold and sz >= body * _BOLD_RATIO
                       and gap_above >= body * 0.6)
-        if (big or bold_block) and short and no_end and not_num:
-            cat = (LayoutCategory.TITLE if bool(body) and sz >= body * _TITLE_RATIO
-                   else LayoutCategory.SECTION_HEADER)
-            out.append((bbox, cat))
-    return out
+        if not ((big or bold_block) and _valid_heading_text(txt)):
+            continue
+        if _looks_like_data_row(txt):          # borderless-table data row, not a heading
+            continue
+        cat = (LayoutCategory.TITLE if bool(body) and sz >= body * _TITLE_RATIO
+               else LayoutCategory.SECTION_HEADER)
+        cands.append((bbox, cat, sz, bbox[1], bbox[3]))
+    # Drop tight same-size runs (borderless-table rows / list items masquerading as headings).
+    cands = _suppress_dense_clusters(cands, body)
+    return [(bbox, cat) for bbox, cat, _, _, _ in cands]
 
 
 # Heron's 17-class label -> our LayoutCategory. Classes not in our enum (Document

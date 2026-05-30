@@ -716,8 +716,16 @@ def tag_untagged_pdf(
                             cell_mcids = element_to_mcids.get(cell_id, [])
 
                             is_empty = not cell.get("merged_from")
-                            if not is_empty and not cell_mcids:
-                                continue # Skip non-empty cells that failed BDC injection
+                            # A cell may carry native chars (merged_from) yet get NO
+                            # MCIDs if BDC injection couldn't mark them. DON'T drop it:
+                            # dropping shifts every later cell left and _normalize_table_
+                            # columns pads an empty TD at the end (the column-shift +
+                            # lost-text failure the dp-bench table decomposition exposed
+                            # — e.g. doc052 'REGIONS'/9/8/5 vanished). Emit it positionally
+                            # with /ActualText instead (PDF/UA-valid, same no-/K path as
+                            # OCR'd text). cell_mcids drives /K below; empty -> /ActualText.
+                            if not cell_mcids:
+                                is_empty = True
 
                             # Dynamically determine row header status based on text content
                             cell_text = cell.get("text", "")

@@ -232,18 +232,47 @@ def _build_cells_from_tf(td, pdf_path, page_num):
             return tuple(float(v) for v in b[:4])
         return (0.0, 0.0, 0.0, 0.0)
 
+    cell_bboxes = [_bbox_of(c) for c in table_cells]
+
+    # Assign EACH table-region char to a cell by containment-then-NEAREST, not
+    # strict containment. TableFormer's predicted cell bboxes are approximate, so
+    # strict "char center inside bbox" silently DROPS any char whose center lands
+    # just outside its cell — the dominant native-text-fill loss the dp-bench
+    # decomposition exposed (LOW bucket: TEDS-S 0.63 grid correct but TEDS 0.29
+    # with text — empty cells + clipped leading chars like "Alignment"->"lignment").
+    # Restricting to the table region (union of cell bboxes, padded) keeps stray
+    # page chars out; nearest-cell fallback guarantees no in-region char is lost.
+    assigned: dict[int, list] = {i: [] for i in range(len(cell_bboxes))}
+    if cell_bboxes:
+        tx0 = min(b[0] for b in cell_bboxes); ty0 = min(b[1] for b in cell_bboxes)
+        tx1 = max(b[2] for b in cell_bboxes); ty1 = max(b[3] for b in cell_bboxes)
+        pad = 4.0  # 150-DPI px tolerance at the table edge
+        for ci, cx, cy, t in chars:
+            if not (tx0 - pad <= cx <= tx1 + pad and ty0 - pad <= cy <= ty1 + pad):
+                continue
+            best_i, best_d = -1, None
+            for i, b in enumerate(cell_bboxes):
+                if b[0] <= cx <= b[2] and b[1] <= cy <= b[3]:
+                    best_i, best_d = i, -1.0  # inside: unbeatable
+                    break
+                dx = max(b[0] - cx, 0.0, cx - b[2])
+                dy = max(b[1] - cy, 0.0, cy - b[3])
+                d = dx * dx + dy * dy
+                if best_d is None or d < best_d:
+                    best_i, best_d = i, d
+            if best_i >= 0:
+                assigned[best_i].append((ci, cx, t))
+
     cells_data = []
-    for c in table_cells:
+    for i, c in enumerate(table_cells):
         r = int(c.get("row_id", c.get("start_row_offset_idx", 0)))
         col = int(c.get("column_id", c.get("start_col_offset_idx", 0)))
         # cell_class 2 = column header per TableFormer's label vocabulary
         is_header = c.get("cell_class") == 2 or str(c.get("label", "")).lower() == "ched"
-        bbox = _bbox_of(c)
-        inside = [(ci, t) for ci, cx, cy, t in chars
-                  if bbox[0] <= cx <= bbox[2] and bbox[1] <= cy <= bbox[3]]
-        inside.sort(key=lambda z: z[0])
-        text = "".join(t for _, t in inside).strip()
-        merged_from = [f"p{page_num}_c{ci}" for ci, _ in inside]
+        bbox = cell_bboxes[i]
+        toks = sorted(assigned[i], key=lambda z: z[1])  # left-to-right within the cell
+        text = "".join(t for _, _, t in toks).strip()
+        merged_from = [f"p{page_num}_c{ci}" for ci, _, _ in toks]
         is_row_header = (col == 0 and not is_header and bool(text)
                          and not _is_numeric(text))
         cells_data.append({
