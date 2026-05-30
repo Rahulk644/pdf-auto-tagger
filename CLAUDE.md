@@ -140,6 +140,10 @@ Stage 10  struct_tree_writer   Builds PDF struct tree (in READING order, not
 
 Read-only checker — separate from the tagging pipeline. Reports per-rule pass / fail / N/A for the eight rules our pipeline cares about (`ACT-6cfa84`, `ACT-36b590`, `ACT-b40fd1`, `PDFUA-7.4.2`, `PDFUA-7.1-10`, `PDFUA-7.5.2`, `PDFUA-7.5.3`, `PDFUA-7.1-1`). Use this to compare our tagged output against PREP / PDFix / any other tool's tagged output deterministically.
 
+Two reporting layers sit on top (no new checks, just re-express the same results):
+- `tagger/audit/matterhorn.py` — maps each rule to its **Matterhorn Protocol 1.1** failure-condition ID (e.g. `13-004` figure Alt, `14-003` heading skip, `11-001` Lang, `07-001` DisplayDocTitle) so output speaks PAC's language. `RULE_TO_MATTERHORN` must cover every act_rules rule (a test guards this).
+- `tagger/audit/screen_reader.py` — deterministic AT linearizer: walks the struct tree in reading order and emits what NVDA/JAWS/VoiceOver would announce (heading levels, figure Alt, table dims, lists) while SILENCING artifacts. `linearize(pdf).as_text()` is the transcript; `smell_test(pdf)` returns the issues a reader would hit (graphic w/o Alt, empty heading, table w/o TH, non-descriptive link, no StructTreeRoot). Cross-platform — the in-pipeline stand-in for the Windows-only real readers.
+
 ### Shared per-document IO cache (`tagger/page_cache.py`)
 
 Stages 1/3/5 used to independently rasterize and re-open the same PDF. `page_cache` centralizes both:
