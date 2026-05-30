@@ -15,14 +15,15 @@ The pipeline runs in two interchangeable layout backends, selected by `TAGGER_LA
 
 | metric | CPU pipeline | GPU pipeline (MinerU + V2 fixes) | Δ vs GPU |
 |---|---|---|---|
-| overall | **0.837** | 0.802 | **+0.035** |
+| overall | **0.839** | 0.802 | **+0.037** |
 | NID (reading order) | **0.888** | 0.874 | +0.014 |
-| TEDS (tables) | **0.731** | 0.429 | **+0.302** |
-| MHS (headings) | **0.720** | 0.716 | +0.005 |
+| TEDS (tables) | **0.740** | 0.429 | **+0.311** |
+| MHS (headings) | **0.726** | 0.716 | +0.010 |
 
 The CPU pipeline beats the GPU pipeline on every dp-bench metric at ~2.2 s/doc. TEDS
-jumped **0.581 → 0.731** after the table **integration** fixes (nearest-cell text-fill +
-the Stage-10 cell-drop fix) — a neutral cross-dataset shootout (PubTabNet + FinTabNet)
+jumped **0.581 → 0.740** after the table fixes (nearest-cell text-fill + the Stage-10
+cell-drop fix + a Stage-6 fix that stopped valid tables being dropped to /Artifact) —
+a neutral cross-dataset shootout (PubTabNet + FinTabNet)
 proved the structure model was never the bottleneck; native cell-text-fill was.
 
 **Audit batch (14 real-world tagged PDFs, vs PREP and PDFix):**
@@ -71,7 +72,7 @@ Stage 10  struct_tree_writer   builds StructTreeRoot, injects BDC/EMC marked
                               content, font-aware glyph counting (Type0 = 2-byte)
 ```
 
-The whole pipeline is **CPU-only by default** and runs locally on M1, no MinerU spawned. Stage 3 runs **one** Heron inference per native page (shared across the table/heading/formula merges) and a per-document page-image + pdfplumber cache (`tagger/page_cache.py`) removes duplicate rasterization/parsing. The full test suite (299 passing + 3 skipped) runs locally in under 45 s.
+The whole pipeline is **CPU-only by default** and runs locally on M1, no MinerU spawned. Stage 3 runs **one** Heron inference per native page (shared across the table/heading/formula merges) and a per-document page-image + pdfplumber cache (`tagger/page_cache.py`) removes duplicate rasterization/parsing. The full test suite (303 passing + 3 skipped) runs locally in under 45 s.
 
 ## 🧪 Conformance audit module (`tagger/audit/`)
 
@@ -115,7 +116,7 @@ Two different questions, two different answers — don't conflate them:
 5. **PDF/UA-1 + ACT enforcement** — heading-hierarchy + structural enforcers prevent the failure modes PREP and PDFix exhibit.
 6. **PDF/UA-2 formula MathML** — `/Formula` elements carry MathML as a PDF 2.0 Associated File (`/AF` Supplement) + `/Alt`; LaTeX from the text layer by default, image→LaTeX (`TAGGER_FORMULA_RECOGNIZER=vlm`) optional. veraPDF UA-1 stays 106/106.
 7. **Conformance + correctness reporting** — Matterhorn IDs, cross-platform screen-reader linearizer, veraPDF CI gate, and an expert-benchmark correctness harness.
-8. **Local test suite** — 299 passing under `TAGGER_LAYOUT_BACKEND=cpu`, no MinerU spawned, in under 45 s.
+8. **Local test suite** — 303 passing under `TAGGER_LAYOUT_BACKEND=cpu`, no MinerU spawned, in under 45 s.
 
 ## ⚠️ Known limitations
 
@@ -158,7 +159,7 @@ python -m tagger.audit.screen_reader output.pdf          # --issues for just the
 python scripts/verapdf_gate.py
 python scripts/screen_reader_corpus.py <dir-of-tagged-pdfs>
 
-# Run the test suite (299 passing, CPU backend)
+# Run the test suite (303 passing, CPU backend)
 TAGGER_LAYOUT_BACKEND=cpu pytest -q
 ```
 

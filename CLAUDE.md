@@ -41,7 +41,7 @@ PYTHONPATH=. python scratch/run_benchmark.py <benchmark_root> [--remediation-dir
 # dp-bench scoring (CPU/free)
 PYTHONPATH=. python scratch/run_dpbench.py --gt-dir <gt> --pred-dir <out> --out card.json
 
-# Run tests — LOCAL CPU BACKEND (full suite green, 299 passing, ~40s)
+# Run tests — LOCAL CPU BACKEND (full suite green, 303 passing, ~40s)
 TAGGER_LAYOUT_BACKEND=cpu pytest -q
 # single file / verbose:
 TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
@@ -60,7 +60,7 @@ TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
 | `TAGGER_ALT_TEXT_MODE` | `ALT_TEXT.mode` | `siglip` / `placeholder` / `vlm` | `siglip` | leave default unless reproducing the legacy review-required placeholders |
 | `TAGGER_OCR_QUALITY` | `OCR.quality` | `speed` / `balanced` / `quality` | `balanced` | `quality` for noisy scans |
 | `TAGGER_FORMULA_RECOGNIZER` | `FORMULA.recognizer` | `text` / `vlm` | `text` | `text` = born-digital text layer (flattens ~76% of formulas to structure-less `\text{}`). `vlm` = `rapid_latex_ocr` (onnx image→LaTeX) in an ISOLATED py3.11 venv (`~/.tagger/latexocr_venv`; it caps at Python<3.13 so can't live in the py3.14 main venv). Crops are BATCHED into ONE subprocess per doc (100+ formulas/doc → per-crop spawning infeasible); graceful no-op to `text` if the venv is absent. Measured: real-LaTeX 19%→54% on arXiv STEM. Provision: `python3.11 -m venv ~/.tagger/latexocr_venv && ~/.tagger/latexocr_venv/bin/pip install rapid_latex_ocr requests` |
-| `TAGGER_TABLE_ENGINE` | `TABLE.engine` | `tableformer` / `ppstructure` / `slanet` / `unitable` | `tableformer` | structure-model tier of the table cascade. `tableformer` (default) won END-TO-END despite PP-Structure winning the *isolated-crop* bench. A **neutral cross-dataset shootout** (PubTabNet, in-dist for PP/SLANet; FinTabNet, in-dist for TableFormer) confirmed the engine is NOT the bottleneck — every engine is 0.82–0.98 raw while the pipeline was 0.567 — so the table win came from fixing **integration** (native-text-fill), not swapping models: dp-bench TEDS 0.581 → **0.731**. rapid_table engines (`ppstructure`/`slanet`/`unitable`) available for experimentation; `unitable` OOMs on 8GB |
+| `TAGGER_TABLE_ENGINE` | `TABLE.engine` | `tableformer` / `ppstructure` / `slanet` / `unitable` | `tableformer` | structure-model tier of the table cascade. `tableformer` (default) won END-TO-END despite PP-Structure winning the *isolated-crop* bench. A **neutral cross-dataset shootout** (PubTabNet, in-dist for PP/SLANet; FinTabNet, in-dist for TableFormer) confirmed the engine is NOT the bottleneck — every engine is 0.82–0.98 raw while the pipeline was 0.567 — so the table win came from fixing **integration** (native-text-fill), not swapping models: dp-bench TEDS 0.581 → **0.740**. rapid_table engines (`ppstructure`/`slanet`/`unitable`) available for experimentation; `unitable` OOMs on 8GB |
 
 ## Architecture
 
@@ -167,9 +167,10 @@ Stages 1/3/5 used to independently rasterize and re-open the same PDF. `page_cac
 
 **Table cells** are NOT `TaggedElement` instances — they live inside `el.specialist_data["cells"]` as dicts with keys `row_idx`, `col_idx`, `text`, `merged_from`, `is_header`, `is_row_header`. Stage 10 reads these directly to build `TR > TH/TD` structure.
 
-**Table cell-text fill (the TEDS 0.581 → 0.731 lever — see also `[[project-table-and-datasets-intel]]`):** a neutral PubTabNet+FinTabNet shootout proved the structure engine isn't the table bottleneck (all engines 0.82–0.98 raw, pipeline 0.567); a per-doc TEDS-vs-TEDS-S decomposition localized the loss as **native-text-fill** in two places, both now fixed:
+**Table cell-text fill (the TEDS 0.581 → 0.740 lever — see also `[[project-table-and-datasets-intel]]`):** a neutral PubTabNet+FinTabNet shootout proved the structure engine isn't the table bottleneck (all engines 0.82–0.98 raw, pipeline 0.567); a per-doc TEDS-vs-TEDS-S decomposition localized the loss as **native-text-fill** in two places, both now fixed:
 - `docling_table_extractor._build_cells_from_tf` — was strict "char-center *inside* the predicted cell bbox", which dropped chars whose center fell just outside TableFormer's approximate bbox (empty cells, clipped leading chars). Now **containment-then-nearest-cell** over the table-region char set — no in-region char is lost.
 - `struct_tree_writer` (Stage 10) — a cell whose chars got no MCID was **dropped from the row**, shifting later cells left and triggering an empty-`/TD` pad (column-shift that vanished real data). Now the cell is **emitted positionally with `/ActualText`** (same no-`/K` path as `merged_from`-empty elements below). veraPDF UA-1 stays compliant.
+- `consistency_validator` (Stage 6) `ZeroCharElementRule` — was artifacting any empty-`el.text` element except FIGURE/ARTIFACT, so a valid fully-extracted TABLE (text lives in `specialist_data["cells"]`, NOT `el.text`) got **dropped to `/Artifact`** entirely. Excluded TABLE (degenerate tables are still caught by single_cell_table/empty_table). This lifted dp-bench TEDS 0.731 → **0.740**.
 
 ### Stage 10 BDC injection (`content_stream_writer.py`)
 

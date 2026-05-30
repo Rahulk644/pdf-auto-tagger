@@ -65,7 +65,7 @@ CLI: `python -m tagger.audit.act_rules <pdf> [...]` — per-doc summary; `--json
 
 ### CPU-native (default)
 
-Everything runs locally on M1 / commodity CPU. No GPU, no Modal, no AGPL deps. The whole `.venv3` is ~1.3 GB including torch + transformers + Docling + RapidOCR. ~2.2 s/doc on dp-bench. Test suite (299 passing) runs in under 35 s.
+Everything runs locally on M1 / commodity CPU. No GPU, no Modal, no AGPL deps. The whole `.venv3` is ~1.3 GB including torch + transformers + Docling + RapidOCR. ~2.2 s/doc on dp-bench. Test suite (303 passing) runs in under 35 s.
 
 ### Modal (legacy MinerU layout + production QA auditor)
 
@@ -82,12 +82,14 @@ The same E4B endpoint is reused as the optional Stage 9 alt-text backend (`ALT_T
 
 | metric | CPU pipeline | GPU pipeline (MinerU + V2 fixes) | Δ vs GPU |
 |---|---|---|---|
-| overall | **0.837** | 0.802 | **+0.035** |
+| overall | **0.839** | 0.802 | **+0.037** |
 | NID (reading order) | **0.888** | 0.874 | +0.014 |
-| TEDS (tables) | **0.731** | 0.429 | **+0.302** |
-| MHS (headings) | **0.720** | 0.716 | +0.005 |
+| TEDS (tables) | **0.740** | 0.429 | **+0.311** |
+| MHS (headings) | **0.726** | 0.716 | +0.010 |
 
-TEDS rose 0.581 → 0.731 after the table integration fixes (§4 *Table cell-text fill*).
+TEDS rose 0.581 → 0.740 after the table fixes (§4 *Table cell-text fill* + the Stage-6
+fix that stopped valid tables being dropped to /Artifact); MHS rose 0.720 → 0.726 from
+the heading precision/leveling/caption fixes (§4 *Heading precision guards*).
 A neutral cross-dataset shootout (PubTabNet, in-distribution for PP-Structure/SLANet;
 FinTabNet, in-distribution for TableFormer) showed every structure engine scores
 0.82–0.98 raw while the pipeline delivered 0.567 — proving the loss was integration,
@@ -137,14 +139,14 @@ Both enforcers return a stats dict so the pipeline can log what was changed and 
 
 The content-stream rewriter's positional counter (`current_char_idx` in `_rewrite_stream`) advances by `len(bytes(operand)) // bytes_per_code`. `bytes_per_code` is resolved from the current `Tf` operator's font subtype — Type0 = 2, simple = 1. Using `len(str(operand))` instead (the previous behavior) over-counts on Type0 fonts and desyncs the entire char↔glyph mapping for that page; the table data falls to `/Artifact`, screen readers miss it, veraPDF still passes. The fix recovered substantial table content on Type0-font pages and is one of the reasons the CPU pipeline now beats GPU on TEDS.
 
-### Table cell-text fill (the TEDS 0.581 → 0.731 lever)
+### Table cell-text fill (the TEDS 0.581 → 0.740 lever)
 
 A neutral cross-dataset shootout settled that the structure engine is *not* the table bottleneck (every engine scores 0.82–0.98 raw; the pipeline delivered 0.567). A per-doc **TEDS vs TEDS-S** decomposition then split the loss: detection misses were only 7%, but 35% of table docs had a correct grid (TEDS-S 0.63) and wrong/empty cell text (TEDS 0.29) — i.e. the loss is **native-text-fill**, in two distinct places:
 
 - **Specialist matching** (`docling_table_extractor._build_cells_from_tf`): strict "char-center *inside* the predicted cell bbox" silently dropped any char whose center fell just outside TableFormer's approximate cell bbox (empty cells, clipped leading characters). Now each table-region char is assigned by **containment-then-nearest-cell**, so no in-region char is lost.
 - **Stage-10 serialization** (`struct_tree_writer`): a cell whose chars produced *no* MCID from BDC injection was **dropped from the row**, which shifted every later cell left and `_normalize_table_columns` padded an empty `/TD` at the end — a column-shift that vanished real data (e.g. a row of `9 / 8 / 5` became three empty cells). The cell is now **emitted positionally with `/ActualText`** (the same no-`/K` path used for OCR'd text), preserving both column position and text.
 
-Both are deterministic, both keep veraPDF UA-1 compliant (the `/ActualText` path is conformant), and together they lifted dp-bench TEDS 0.581 → 0.731 with no NID/MHS regression. Lesson: when raw model quality far exceeds end-to-end, decompose TEDS vs TEDS-S per document to separate structure error from text-fill error before touching the model.
+Both are deterministic, both keep veraPDF UA-1 compliant (the `/ActualText` path is conformant), and together they lifted dp-bench TEDS 0.581 → 0.740 with no NID/MHS regression. Lesson: when raw model quality far exceeds end-to-end, decompose TEDS vs TEDS-S per document to separate structure error from text-fill error before touching the model.
 
 ### Stage 9 alt-text and the PDF/UA-2 formula MathML path
 
