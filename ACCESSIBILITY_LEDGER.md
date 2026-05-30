@@ -21,10 +21,10 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 
 | Requirement | Standing | Evidence |
 |---|---|---|
-| **Semantic & structural tagging** | Strong on high-value tags; fine semantic inline tags flattened to `<P>` | dp-bench overall **0.839**; suite 307 green |
+| **Semantic & structural tagging** | Strong on high-value tags; fine semantic inline tags flattened to `<P>` | dp-bench overall **0.839**; suite 308 green |
 | **Artifacting** (hide decorative) | Headers/footers/page-#s/margin-watermarks artifacted | Stage 8c `artifact_detector` |
 | **Logical reading order** | AI regions ordered by XY-cut; multi-column/floating still imperfect | NID **~0.83–0.888** |
-| **Alternative text** | *Presence* solved; *quality* is the hole | short-alt 93% guideline-compliant; long-description **0%** |
+| **Alternative text** | Presence solved; **guidelines-VLM produces real, grounded descriptions** (eyeball-verified win over placeholders); rubric strengthened to reject placeholders | VLM 100% rubric-compliant vs placeholder 0% (was a false 100%); chart-value hallucination not yet validated |
 | **Document metadata** (Lang, Title) | Set + enforced | veraPDF UA-1 clean, Matterhorn 11-001/07-001 mapped |
 
 ---
@@ -58,7 +58,7 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 | Metric | Value | Source |
 |---|---|---|
 | veraPDF UA-1 | **compliant** (CI-gated) | `scripts/verapdf_gate.py` |
-| Test suite | **307 passed**, 3 skipped | `pytest` (cpu backend) |
+| Test suite | **308 passed**, 3 skipped | `pytest` (cpu backend) |
 | dp-bench overall | **0.839** | dp-bench |
 | Reading order (NID) | **0.83–0.888** | dp-bench / corpus |
 | Tables (TEDS) | **0.740** | dp-bench |
@@ -102,12 +102,14 @@ P, H1–H6, L/LI/Lbl/LBody, Table/TR/TH/TD, Figure, Formula (+MathML /AF, opt-in
 - ✅ Convention-free coverage scorecard harness (`scratch/prep_baseline/`) — 80-doc run complete.
 - ✅ **Digital-signature safety guard** (`pdf_is_signed` + Stage 10 gate) — signed PDFs (49/774 in corpus) are detected and emitted **unmodified** (rewriting invalidates the signature); flagged `signed_unmodified`. Unit-tested end-to-end.
 - ✅ **Adjacent-label `/TU` for cryptic form fields** — 37% of corpus field names are generated ids (`Text12`, `X3`); for those, `/TU` is now derived from the visible label (text to the left / above the widget) instead of the useless name. `_clean_label` rejects non-word labels (numbers, markers) → safe fallback to the field name; never a misleading `/TU`. Controlled test passes (`Text1` + "Employee Name" → `/TU` "Employee Name"). Low applicability on this corpus's *grid* forms (they fall back safely), real win for structured forms.
+- ✅ **Alt-text quality: guidelines-VLM + strengthened rubric.** Rewrote the alt-text prompt (`config.py`) to the McGowan guidelines (convey meaning/data, no appearance prefix, anti-hallucination clause); deployed the Gemma-4-E4B vision endpoint on Modal. Scoreboard (50 figures): the VLM produces **real, grounded, meaningful** descriptions ("a boy in a wheelchair smiles in a classroom, illustrating special education") where the baseline emitted **placeholders** ("Figure (description needed)"). **Exposed that the rubric was too weak** — it passed placeholders at 100%; added a `placeholder` check → baseline now correctly 0%, VLM 100% (eyeballed pairs). Unit-tested. ⚠️ Sample was photos/logos (no data charts) → **chart-value hallucination unvalidated** (next).
+- ✅ **Cross-page true-merge INVESTIGATED → defer.** Prevalence probe: only **2/20 docs (10%)** have a table/list continuation. High complexity (cross-page MCID/`/Pg`, cell reconciliation) for modest benefit (two adjacent valid tables is not a conformance failure) → deferred with the number.
 - ✅ **Figure under-detection INVESTIGATED → no fix.** Diagnostic (30 docs): 20 ok/over, 6 "undercount" that are really **incumbent over-count** (we capture the actual source images; surplus correctly → Artifact per PDF4/H67), 3 incumbent-only (phantom/vector), 1 true detection-miss. The "recall 0.52 vs incumbent" is ~90% an incumbent IMG-counting artifact, not our miss. Chasing it would invent figures.
 
 - ✅ **Redaction guard INVESTIGATED → do not build.** Prevalence probe (150 docs): the naive "dark filled rect over dark text" heuristic flagged 43%, but inspection showed **all false positives** — heading underlines (1px-tall rules) and light background/content panels that pdfplumber misreads as `fill=0` (covering 256–660 chars of *readable* text). True redaction prevalence in this corpus is ~0, and the heuristic can't distinguish a redaction box from a background panel via extraction alone → a guard would **hide real content**. Deferred (would need rendered-pixel occlusion analysis for a near-zero-prevalence case).
 
 ### NEXT (immediate · deterministic · measured)
-1. Re-measure the coverage scorecard counting links/forms from OUR OUTPUT (not source) to quantify the link-fix lift.
+1. **Validate alt-text VLM on data charts** — chart-heavy sample to confirm it conveys values WITHOUT hallucinating (the unproven high-risk case).
 2. **Alt-text quality** (the genuine semantic hole) — scoreboard current corpus alt-text vs the McGowan rubric, then the document-context VLM upgrade on Modal.
 
 ### PLANNED (will do · needs GPU or larger work · scoreboard-gated)

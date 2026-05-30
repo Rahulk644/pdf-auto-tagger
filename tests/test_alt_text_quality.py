@@ -1,7 +1,20 @@
 """Alt-text QUALITY checker — the deterministic floor from the McGowan guidelines."""
 import pytest
 
-from tagger.audit.alt_text_quality import _APPEARANCE_PREFIX, _BARE_TYPE, check_alt_quality
+from tagger.audit.alt_text_quality import (
+    _APPEARANCE_PREFIX, _BARE_TYPE, _PLACEHOLDER, check_alt_quality)
+
+
+def test_placeholder_alt_flagged():
+    """Review-required placeholders are well-formed sentences that pass the format
+    checks but convey nothing — the rubric must reject them (else placeholder alt
+    scores 100% compliant, as the alt-quality scoreboard exposed)."""
+    assert _PLACEHOLDER.search("Figure (description needed).")
+    assert _PLACEHOLDER.search("[alt_text_placeholder] Figure needs descriptive alt text.")
+    assert _PLACEHOLDER.search("Image to be described.")
+    # real, informative alt must NOT trip it
+    assert not _PLACEHOLDER.search("Bar chart of quarterly revenue rising from $2M to $5M.")
+    assert not _PLACEHOLDER.search("Missouri Department of Education logo with a flame icon.")
 
 
 def test_appearance_prefix_flagged():

@@ -31,6 +31,13 @@ _APPEARANCE_PREFIX = re.compile(
 _BARE_TYPE = re.compile(
     r"^\s*(figure|image|chart|graph|diagram|schematic|map|photo|photograph|table|graphic)\s*[.:]?\s*$",
     re.IGNORECASE)
+# Non-informative / review-required placeholders that PASS the format checks above
+# (they're well-formed sentences) yet convey nothing — the rubric must reject them so
+# "100% compliant" can't be reached with placeholder alt text.
+_PLACEHOLDER = re.compile(
+    r"(description needed|alt[_\s]?text[_\s]?placeholder|needs?\s+(a\s+)?descriptive\s+alt"
+    r"|to be (described|added)|review required|placeholder|no description|tbd|todo)",
+    re.IGNORECASE)
 
 
 @dataclass
@@ -109,6 +116,9 @@ def check_alt_quality(path: str) -> AltQualityReport:
                     if _BARE_TYPE.match(alt):
                         rep.issues.append(AltIssue(pg(n), "bare_type",
                             "only a type word — conveys no information", alt))
+                    if _PLACEHOLDER.search(alt):
+                        rep.issues.append(AltIssue(pg(n), "placeholder",
+                            "review-required placeholder — conveys no real information", alt))
                     for cap in captions_by_pg.get(pg(n), []):
                         if cap and _norm(cap) == _norm(alt):
                             rep.issues.append(AltIssue(pg(n), "redundant_with_caption",

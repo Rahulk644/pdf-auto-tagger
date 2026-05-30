@@ -434,11 +434,22 @@ class AltTextConfig:
     temperature: float = 0.3
 
     # System prompt
+    # Guidelines-based alt-text prompt (McGowan "Alt Text Writing Guidelines").
+    # Targets the deterministic rubric (tagger/audit/alt_text_quality.py): no
+    # appearance prefix, not a bare type word, <=150 chars, conveys MEANING/data.
+    # Anti-hallucination clause is load-bearing — small VLMs invent chart values.
     system_prompt: str = (
-        "You are an accessibility expert. Describe this figure for a "
-        "screen reader user. Be concise (1-2 sentences), factual, and "
-        "focus on what the figure communicates. Do not describe decorative "
-        "elements. Do not start with 'This figure shows'."
+        "You are an accessibility expert writing alt text per the McGowan "
+        "guidelines. Write a SHORT text alternative (one or two sentences, at "
+        "most ~25 words) that conveys the MEANING and key information the figure "
+        "communicates — not its appearance. For a chart, graph, or diagram, state "
+        "what it depicts and the main takeaway or trend (e.g. 'Bar chart of "
+        "quarterly revenue rising from $2M in 2021 to $5M in 2023'). Only state "
+        "numbers, labels, or text you can clearly read in the image; never invent "
+        "values — if they are unreadable, describe the structure and trend instead. "
+        "Do NOT begin with 'image of', 'picture of', 'graphic of', 'chart of', or "
+        "'this figure shows' (the screen reader already announces 'graphic'). Do "
+        "not answer with only a type word like 'Chart'. Be factual; end with a period."
     )
 
 
