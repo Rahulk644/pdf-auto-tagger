@@ -129,9 +129,28 @@ Both enforcers return a stats dict so the pipeline can log what was changed and 
 
 The content-stream rewriter's positional counter (`current_char_idx` in `_rewrite_stream`) advances by `len(bytes(operand)) // bytes_per_code`. `bytes_per_code` is resolved from the current `Tf` operator's font subtype — Type0 = 2, simple = 1. Using `len(str(operand))` instead (the previous behavior) over-counts on Type0 fonts and desyncs the entire char↔glyph mapping for that page; the table data falls to `/Artifact`, screen readers miss it, veraPDF still passes. The fix recovered substantial table content on Type0-font pages and is one of the reasons the CPU pipeline now beats GPU on TEDS.
 
-## 5. What's parked
+### Stage 9 alt-text and the PDF/UA-2 formula MathML path
 
-- **PDF/UA-2 MathML for formulas** — formula recognizer (pix2tex / LaTeX-OCR / similar small CPU model) → LaTeX → MathML emitter → embed as PDF 2.0 Associated File. Substantial new unit; same shape as the Docling-TableFormer integration but for formulas.
-- **Color contrast (WCAG 1.4.3)** — handled in a separate repo per user direction.
-- **Per-doc QA reports** of the audit batch (PAC reports exist; we read veraPDF + ACT; the PAC report's human judgment is the third axis we haven't programmatically ingested).
+Stage 9 default is SigLIP zero-shot bucket → McGraw-Hill template. Formulas now carry MathML as a PDF 2.0 Associated File: Stage 3 merges Heron `Formula` regions on native pages (`_merge_docling_formulas`), Stage 5 derives LaTeX (text layer; optional image→LaTeX via `TAGGER_FORMULA_RECOGNIZER=vlm`, subprocess-isolated), `mathml_emitter` converts via `latex2mathml`, and Stage 10's `_embed_mathml_af` attaches `/AF` (`/Supplement`, `application/mathml+xml`) on the `/Formula` element + `/Alt` + catalog `/AF`. veraPDF UA-1 stays 106/106.
+
+### Performance: one Heron pass + shared IO cache
+
+Stage 3 used to run the Heron region detector 3× per native page (via the table, heading, and formula merges). It now computes the regions once and passes them down (3× → 1× inference on the ~40%-of-runtime stage). `tagger/page_cache.py` adds a per-document page-image cache (`render_page`, fitz, `lru_cache(maxsize=8)` bounded for M1 8 GB) shared by Heron / TableFormer / picodet / the formula renderer, and a cached `open_pdf` handle so Stages 1/3/5 parse the PDF once. `pipeline.run()` clears both per document. All behavior-preserving (dp-bench identical).
+
+### Audit + reporting surfaces (`tagger/audit/`)
+
+Read-only, separate from tagging. `act_rules` evaluates the 8 ACT/PDF-UA rules; `matterhorn` re-expresses them as Matterhorn 1.1 failure-condition IDs; `screen_reader` linearizes the struct tree into the AT announcement stream (`smell_test` returns intrinsic reading-experience defects). `scripts/verapdf_gate.py` + `.github/workflows/ci.yml` gate every push on veraPDF UA-1; `scripts/screen_reader_corpus.py` sweeps a directory.
+
+### Correctness methodology (conformance ≠ correctness)
+
+Conformance (valid/present) is self-scored fully (veraPDF/ACT/Matterhorn/intrinsic defects). Correctness (tags actually right) needs ground truth: the 35-doc **PDF-Accessibility-Benchmark** (= our PDF-A-B; `tagger/benchmark/`, `scratch/run_benchmark.py`). Re-tagging all 35 with current code and scoring vs expert labels: structural criteria 90–100% agreement, beating Adobe's checker; **alt-text quality 0%** is the unvalidated content-quality hole. CPU-VLM pilots (SmolVLM 256M/500M) confirmed small vision models hallucinate chart specifics (language-prior dominance) — so the planned semantic *judge* keeps VLMs out of the perception loop: deterministic perception (pdfplumber) → text-only LLM reasoning over physical-layout vs tag-tree.
+
+## 5. What's parked / opt-in
+
+- **Image→LaTeX formula recogniser** (`vlm` mode) — needs an isolated venv (pix2tex/UniMERNet pins conflict with the main venv → subprocess-only). The MathML substrate ships regardless.
+- **Semantic-correctness judge** — deterministic perception + text-only quantized LLM (llama.cpp on M1, OpenVINO on x86 prod); the real "automated semantics" engine, not yet built.
+- **Type-routed alt-text upgrade** — SigLIP bucket + OCR'd labels + value-safe template for data-bearing figures (small VLMs unreliable here per the pilot).
+- **PicoDet layout backend** — A/B-evaluated, not default (lost MHS gate, ~50% slower on CPU); retained for re-eval.
+- **Color contrast (WCAG 1.4.3)** — separate repo; integration hook only.
+- **Remediation policy** — structure additions always-on; source modifications (fonts/contrast) detect-and-report by default, opt-in/gated only.
 </content>

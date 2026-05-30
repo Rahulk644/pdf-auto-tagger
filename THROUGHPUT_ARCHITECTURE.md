@@ -31,6 +31,8 @@ dp-bench 200 docs, CPU backend, `TAGGER_LAYOUT_BACKEND=cpu`, no GPU spawned:
 
 **Total: ~2.2 s/doc average across the 200-doc dp-bench corpus.** A 6-page scholarly doc lands around 5–8 s; an 80-page doc around 100 s. No single stage dominates the way MinerU did.
 
+**CPU throughput levers [shipped, behavior-preserving]:** Stage 3 now runs the Heron detector **once per native page** instead of 3× (it previously re-ran for the table, heading, and formula merges) — a ~3× cut on the dominant stage's model work. A per-document cache (`tagger/page_cache.py`) renders each page image once (shared by Heron / TableFormer / formula) and opens each PDF once (shared by Stages 1/3/5), removing duplicate rasterization and parsing. Both verified identical-output on dp-bench; the full test suite dropped from ~44 s to ~26 s as a side effect.
+
 ## 3. Where the time goes — legacy MinerU path [measured]
 
 For organisations still on the MinerU path:

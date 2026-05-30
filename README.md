@@ -68,7 +68,7 @@ Stage 10  struct_tree_writer   builds StructTreeRoot, injects BDC/EMC marked
                               content, font-aware glyph counting (Type0 = 2-byte)
 ```
 
-The whole pipeline is **CPU-only by default** and runs locally in ~2.2 s/doc on M1, no MinerU spawned. The full test suite (266 passing + 3 skipped) runs locally in under 30 s.
+The whole pipeline is **CPU-only by default** and runs locally on M1, no MinerU spawned. Stage 3 runs **one** Heron inference per native page (shared across the table/heading/formula merges) and a per-document page-image + pdfplumber cache (`tagger/page_cache.py`) removes duplicate rasterization/parsing. The full test suite (282 passing + 3 skipped) runs locally in under 45 s.
 
 ## 🧪 Conformance audit module (`tagger/audit/`)
 
@@ -87,6 +87,22 @@ PDFUA-7.1-1                  /MarkInfo /Marked is true
 
 CLI: `python -m tagger.audit.act_rules <pdf> [...]` (add `--json` for the raw aggregate).
 
+Three reporting surfaces sit on the same checks (no new logic, just re-expression):
+- `tagger.audit.act_rules` — the eight ACT/PDF-UA rules above.
+- `tagger.audit.matterhorn` — the same results mapped to **Matterhorn Protocol 1.1** failure-condition IDs (e.g. `13-004` figure Alt, `14-003` heading skip, `11-001` Lang, `07-001` DisplayDocTitle), so output speaks the same language as PAC.
+- `tagger.audit.screen_reader` — a **deterministic, cross-platform screen-reader linearizer**: walks the struct tree in reading order and emits what NVDA/JAWS/VoiceOver would announce (heading levels, figure Alt, table dims, lists) while silencing artifacts. `linearize(pdf).as_text()` is the transcript; `smell_test(pdf)` returns the issues a reader would hit. `scripts/screen_reader_corpus.py` sweeps a whole directory and gates on issues.
+
+## 🔒 CI conformance gate
+
+`scripts/verapdf_gate.py` tags fixtures through the full pipeline and pipes each output through the **veraPDF** CLI — non-zero exit on any non-compliance. Wired into `.github/workflows/ci.yml` (pytest + the gate on every push). The deterministic line under any "PDF/UA compliant" claim: tagging that *looks* right but fails veraPDF fails the build.
+
+## 📊 Conformance vs. correctness (the honest split)
+
+Two different questions, two different answers — don't conflate them:
+
+- **Conformance** (is the structure *valid/present*? — syntactic, deterministic): we self-score this fully and automatically (veraPDF 106/106, ACT, Matterhorn, intrinsic screen-reader defects). This is our strength.
+- **Correctness** (are the tags *actually right*? — semantic): needs ground truth. Measured against the **35-doc expert benchmark** (PDF-Accessibility-Benchmark), our tags agree with human experts **90–100% on structural criteria** (reading order, semantic tagging, table structure, hyperlinks) and **beat Adobe's checker** (e.g. reading order 10 vs 5). The one genuine hole: **alt-text *quality* (0% expert agreement)** — content quality is not yet self-validatable. See `BLUEPRINT.md` for the methodology.
+
 ## ✅ What's working
 
 1. **CPU-native layout** — Docling Heron + TableFormer, beats GPU on all four dp-bench metrics, ~2.2 s/doc.
@@ -95,13 +111,22 @@ CLI: `python -m tagger.audit.act_rules <pdf> [...]` (add `--json` for the raw ag
 4. **Figure alt-text** — SigLIP zero-shot buckets + McGraw-Hill templates with caption awareness.
 5. **PDF/UA-1 + ACT enforcement** — heading-hierarchy + structural enforcers prevent the failure modes PREP and PDFix exhibit.
 6. **PDF/UA-2 formula MathML** — `/Formula` elements carry MathML as a PDF 2.0 Associated File (`/AF` Supplement) + `/Alt`; LaTeX from the text layer by default, image→LaTeX (`TAGGER_FORMULA_RECOGNIZER=vlm`) optional. veraPDF UA-1 stays 106/106.
-7. **Local test suite** — 275 passing under `TAGGER_LAYOUT_BACKEND=cpu`, no MinerU spawned, in under 45 s.
+7. **Conformance + correctness reporting** — Matterhorn IDs, cross-platform screen-reader linearizer, veraPDF CI gate, and an expert-benchmark correctness harness.
+8. **Local test suite** — 282 passing under `TAGGER_LAYOUT_BACKEND=cpu`, no MinerU spawned, in under 45 s.
 
-## ⏳ What's parked / deferred
+## ⚠️ Known limitations
 
-- **Semantic formula MathML at scale** — the MathML substrate ships; richer semantic LaTeX for image-only / garbled-glyph formulas needs the image→LaTeX recogniser (`vlm` mode) activated via an isolated recogniser venv (pix2tex/UniMERNet pins conflict with the main venv, so it runs subprocess-only).
-- **Color contrast (WCAG 1.4.3)** — handled in a separate repo per the user's call.
-- **Heading-on-image semantics** on heavily scanned docs (Stage 1 OCR strips font signal, so H1/H2 distinction on scan-only pages relies on Heron region categories).
+- **Alt-text quality is unvalidated** (0% expert agreement) — figures get an `/Alt`, but whether it's *accurate* is the open hole. CPU-VLM pilots (SmolVLM 256M/500M) confirmed small vision models hallucinate chart specifics (language-prior dominance); the shippable CPU answer is type-routed SigLIP + OCR labels + a value-safe template, not a bigger VLM.
+- **Semantic correctness isn't self-certifiable on arbitrary docs** — only scored against the 35-doc expert set. The planned fix is a split-pipeline judge: deterministic perception (pdfplumber) + a text-only LLM reasoning over physical-layout vs our tag tree (no VLM in the perception loop → no visual hallucination).
+- **Screen-reader check is a simulation** — it linearizes *our own tags*, so it catches missing/broken structure, not whether the structure is *correct*. Real NVDA/JAWS (Windows) / VoiceOver (macOS) remain out-of-process jobs.
+- **Table cell structure** trails (TEDS ≈ 0.58) — the other measured soft spot.
+
+## ⏳ Parked / opt-in
+
+- **Image→LaTeX formula recogniser** (`TAGGER_FORMULA_RECOGNIZER=vlm`) — needs an isolated venv (pix2tex/UniMERNet pins conflict with the main venv → subprocess-only). MathML substrate ships regardless.
+- **PicoDet layout backend** (`TAGGER_LAYOUT_BACKEND=picodet`) — A/B-evaluated, NOT default (lost the MHS gate, ~50% slower on CPU); retained for re-eval.
+- **Color contrast (WCAG 1.4.3)** — separate repo; integration hook only.
+- **Remediation policy:** adding structure (tags/Alt/MathML/reading order) is always-on; modifying the *source* (fonts, contrast) is detect-and-report by default, opt-in/gated only.
 
 ## 📦 Configuration knobs
 
@@ -120,10 +145,16 @@ All thresholds and backend choices live in `tagger/config.py`. The flags users a
 # Tag a PDF locally on CPU (no MinerU, no GPU)
 TAGGER_LAYOUT_BACKEND=cpu python -m tagger.cli tag input.pdf -o output.pdf --report report.json
 
-# Audit a tagged PDF against ACT + PDF/UA-1 rules
+# Audit a tagged PDF: ACT/PDF-UA rules, Matterhorn IDs, or screen-reader transcript
 python -m tagger.audit.act_rules output.pdf
+python -m tagger.audit.matterhorn output.pdf
+python -m tagger.audit.screen_reader output.pdf          # --issues for just the problems
 
-# Run the test suite (266 passing, CPU backend)
+# Conformance gate (needs veraPDF) + screen-reader corpus sweep
+python scripts/verapdf_gate.py
+python scripts/screen_reader_corpus.py <dir-of-tagged-pdfs>
+
+# Run the test suite (282 passing, CPU backend)
 TAGGER_LAYOUT_BACKEND=cpu pytest -q
 ```
 
