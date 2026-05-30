@@ -155,11 +155,20 @@ class LayoutConfig:
 
     model_name: str = "opendatalab/MinerU2.5-Pro-2604-1.2B"
 
-    # Layout backend: "mineru" (GPU VLM) or "cpu" (pdfplumber/xy-cut, born-digital
-    # only, no GPU). The CPU backend resolves the MinerU/GPU dependency for native
-    # PDFs; scanned pages have no text layer and still need MinerU/OCR. Override with
+    # Layout backend: "mineru" (GPU VLM), "cpu" (Docling Heron + pdfplumber/xy-cut,
+    # no GPU), or "picodet" (PP-DocLayout-V3 region detector via HF transformers,
+    # no GPU). The CPU backend resolves the MinerU/GPU dependency for native PDFs;
+    # scanned pages have no text layer and still need MinerU/OCR. Override with
     # TAGGER_LAYOUT_BACKEND=cpu to run the whole pipeline (and the test suite) locally
     # without ever spawning MinerU — MinerU must never run on the dev M1.
+    #
+    # "picodet" shares the CPU detector path but swaps the region SOURCE from Heron
+    # to PP-DocLayout-V3 (drop-in via picodet_layout.py). EVALUATED 2026-05-30 and
+    # NOT made default: it lost the dp-bench MHS gate (heading quality — Heron-
+    # additive headings are what beat the GPU pipeline) and ran ~50% SLOWER on CPU
+    # (it's a 33M RT-DETR served through transformers, not Paddle's 5MB native
+    # PicoDet runtime). Retained as an option for re-eval if a faster runtime or a
+    # table-detection-only hybrid is wanted (its one win was TEDS +0.04).
     backend: str = field(
         default_factory=lambda: os.environ.get("TAGGER_LAYOUT_BACKEND", "mineru")
     )
@@ -213,7 +222,23 @@ TABLE = TableConfig()
 
 @dataclass(frozen=True)
 class FormulaConfig:
-    """Formula extraction via UniMERNet."""
+    """Formula → LaTeX → MathML extraction (PDF/UA-2 Associated File on /Formula).
+
+    recognizer dial (env TAGGER_FORMULA_RECOGNIZER):
+      - "text"  — DEFAULT, no ML: build LaTeX from the born-digital text layer
+                  (formula_extractor raw-text mode). Always available, CPU-free.
+                  Produces structurally-valid MathML; on garbled math glyphs it
+                  falls back to <mtext> (readable but not semantic).
+      - "vlm"   — image→LaTeX via an isolated recogniser venv (UniMERNet /
+                  pix2tex). Real LaTeX → semantic MathML. Runs the recogniser in a
+                  SUBPROCESS because pix2tex/UniMERNet pin old x-transformers/timm
+                  that conflict with our transformers/torch — never install them
+                  into the main venv. Activation = provision the venv (see
+                  formula_extractor._find_unimernet_python); no-op fallback to
+                  "text" if the venv is absent, so it's safe to leave on.
+    """
+    recognizer: str = field(default_factory=lambda: os.environ.get(
+        "TAGGER_FORMULA_RECOGNIZER", "text"))
 
     model_name: str = "wanderkid/unimernet_base"
 

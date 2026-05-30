@@ -289,7 +289,9 @@ class AutoTaggerPipeline:
         logger.info("[Stage 3] Layout detection...")
 
         from tagger.config import LAYOUT
-        if LAYOUT.backend == "cpu":
+        # "picodet" shares the CPU detector path; only the region SOURCE differs
+        # (PP-DocLayout-V3 instead of Heron), dispatched inside cpu_layout_detector.
+        if LAYOUT.backend in ("cpu", "picodet"):
             self._stage3_layout_cpu(input_pdf, doc_data)
             return
 
@@ -591,6 +593,8 @@ class AutoTaggerPipeline:
 
         from tagger.stage4_router.content_router import route_page, diagnose_page
         from tagger.stage5_specialists.table_extractor import extract_table_native
+        from tagger.stage5_specialists.formula_extractor import extract_formula
+        from tagger.stage5_specialists.mathml_emitter import latex_to_mathml
         from tagger.models.data_types import LayoutCategory
 
         total_tagged = 0
@@ -625,10 +629,56 @@ class AutoTaggerPipeline:
                                 }
                                 break
 
+            # Stage 5: run formula specialist on FORMULA regions. The cheap path
+            # uses the born-digital text layer (extract_formula raw-text mode);
+            # the optional image→LaTeX recogniser is layered on separately. We
+            # attach LaTeX + MathML so Stage 10 can emit the PDF/UA-2 Associated
+            # File (/AF) on the /Formula element.
+            formula_regions = [
+                r for r in page_data.layout_regions
+                if r.category == LayoutCategory.FORMULA
+            ]
+            # Image→LaTeX recogniser is opt-in (TAGGER_FORMULA_RECOGNIZER=vlm) and
+            # runs in an isolated subprocess; render the page once if enabled.
+            from tagger.config import FORMULA as _FORMULA
+            page_img = None
+            if formula_regions and _FORMULA.recognizer == "vlm":
+                page_img = self._render_page_image(doc_data.input_path, page_num)
+            for region in formula_regions:
+                for el in tagged:
+                    if el.element_id != region.region_id:
+                        continue
+                    fr = extract_formula(region, [el], page_image=page_img,
+                                         use_vlm=page_img is not None)
+                    if fr and fr.latex:
+                        mathml = latex_to_mathml(fr.latex, is_inline=fr.is_inline)
+                        el.specialist_data = {
+                            **(el.specialist_data or {}),
+                            "latex": fr.latex,
+                            "is_inline": fr.is_inline,
+                        }
+                        if mathml:
+                            el.specialist_data["mathml"] = mathml
+                    break
+
             page_data.tagged_elements = tagged
             total_tagged += len(tagged)
 
         logger.debug("Created %d initially tagged elements.", total_tagged)
+
+    def _render_page_image(self, pdf_path: str, page_num: int):
+        """Render a page at STANDARD_DPI for the formula recogniser (150-DPI
+        standard space, matching region bboxes). Returns None on failure."""
+        try:
+            from PIL import Image
+            with fitz.open(str(pdf_path)) as doc:
+                if page_num - 1 >= len(doc):
+                    return None
+                pix = doc[page_num - 1].get_pixmap(dpi=STANDARD_DPI)
+                return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        except Exception as e:
+            logger.debug("Page %d render for formula recogniser failed: %s", page_num, e)
+            return None
 
     def _stage6_validate(self, doc_data: DocumentData):
         """Stage 6: Consistency validation."""

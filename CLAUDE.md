@@ -41,7 +41,7 @@ PYTHONPATH=. python scratch/run_benchmark.py <benchmark_root> [--remediation-dir
 # dp-bench scoring (CPU/free)
 PYTHONPATH=. python scratch/run_dpbench.py --gt-dir <gt> --pred-dir <out> --out card.json
 
-# Run tests — LOCAL CPU BACKEND (full suite green, 266 passing, ~30s)
+# Run tests — LOCAL CPU BACKEND (full suite green, 275 passing, ~40s)
 TAGGER_LAYOUT_BACKEND=cpu pytest -q
 # single file / verbose:
 TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
@@ -56,9 +56,10 @@ TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
 
 | env var | maps to | values | default | when to set |
 |---|---|---|---|---|
-| `TAGGER_LAYOUT_BACKEND` | `LAYOUT.backend` | `cpu` / `mineru` | `mineru` (frozen-dataclass default; CI/local always sets `cpu`) | always `cpu` locally — `mineru` is the GPU/Modal-only path |
+| `TAGGER_LAYOUT_BACKEND` | `LAYOUT.backend` | `cpu` / `picodet` / `mineru` | `mineru` (frozen-dataclass default; CI/local always sets `cpu`) | always `cpu` locally — `mineru` is the GPU/Modal-only path; `picodet` (PP-DocLayout-V3) was A/B-evaluated and NOT made default (lost MHS gate, ~50% slower on CPU) |
 | `TAGGER_ALT_TEXT_MODE` | `ALT_TEXT.mode` | `siglip` / `placeholder` / `vlm` | `siglip` | leave default unless reproducing the legacy review-required placeholders |
 | `TAGGER_OCR_QUALITY` | `OCR.quality` | `speed` / `balanced` / `quality` | `balanced` | `quality` for noisy scans |
+| `TAGGER_FORMULA_RECOGNIZER` | `FORMULA.recognizer` | `text` / `vlm` | `text` | `vlm` (image→LaTeX) needs an ISOLATED recogniser venv — pix2tex/UniMERNet pin old x-transformers/timm that conflict with the main venv; subprocess only, graceful no-op to `text` if absent |
 
 ## Architecture
 
@@ -93,7 +94,10 @@ Stage 3   layout_detector      Pluggable LayoutModelAdapter, selected by
                                - mineru — legacy MinerU2.5-Pro on Modal A10G.
 Stage 4+5 content_router       Maps Stage 2 PageElements into Stage 3 regions;
           + specialists        specialists (Docling TableFormer for tables,
-                               figure / formula) produce TaggedElements.
+                               figure / formula) produce TaggedElements. FORMULA
+                               regions get LaTeX (text layer, or image→LaTeX when
+                               TAGGER_FORMULA_RECOGNIZER=vlm) → MathML in
+                               specialist_data for the Stage-10 /AF.
 Stage 6   consistency_validator Rule engine; converts bad elements to Artifact.
 Stage 7   cross_page_merger    Merges elements split across page boundaries.
 Stage 8a  heading_ranker       H1–H6 assignment by font-tier rarity.
@@ -125,7 +129,11 @@ Stage 10  struct_tree_writer   Builds PDF struct tree (in READING order, not
                                geometric) + injects BDC/EMC markers via the
                                font-aware glyph counter (Type0 fonts use 2-byte
                                codes; len(str)/len(bytes) would over-count and
-                               desync the char↔glyph mapping).
+                               desync the char↔glyph mapping). /Formula elements
+                               get MathML as a PDF 2.0 Associated File (/AF
+                               Supplement, application/mathml+xml) + /Alt
+                               fallback (PDF/UA-2); _embed_mathml_af, also
+                               registered on the catalog /AF.
 ```
 
 ### Conformance audit layer (`tagger/audit/`)

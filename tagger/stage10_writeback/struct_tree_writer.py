@@ -26,6 +26,30 @@ from tagger.stage1_extraction.coord_transformer import pdf_to_standard
 
 logger = logging.getLogger(__name__)
 
+
+def _embed_mathml_af(pdf, mathml: str, idx: int):
+    """Embed a MathML string as a PDF 2.0 Associated File and return the
+    indirect /Filespec. Used to attach machine-readable maths to a /Formula
+    structure element (`/AF`, relationship /Supplement) for PDF/UA-2.
+
+    The embedded-file stream's /Subtype is the MIME type application/mathml+xml
+    (slash encoded #2F per the Name syntax). The caller links it from the struct
+    element's /AF array AND should register it in the catalog /AF array."""
+    ef_stream = pdf.make_stream(mathml.encode("utf-8"))
+    ef_stream["/Type"] = Name.EmbeddedFile
+    ef_stream["/Subtype"] = Name("/application#2Fmathml+xml")
+    fname = f"formula_{idx}.mml"
+    filespec = pdf.make_indirect(Dictionary({
+        "/Type": Name.Filespec,
+        "/F": String(fname),
+        "/UF": String(fname),
+        "/AFRelationship": Name("/Supplement"),
+        "/Desc": String("MathML representation of the formula"),
+        "/EF": Dictionary({"/F": ef_stream, "/UF": ef_stream}),
+    }))
+    return filespec
+
+
 def _is_numeric_content(text: str) -> bool:
     """Return True if text is empty or contains only numeric/currency content."""
     if not text:
@@ -487,11 +511,15 @@ def tag_untagged_pdf(
         "repair_findings": {},
         "table_cells_padded": 0,
         "headings_renumbered": 0,
+        "formula_mathml_embedded": 0,
     }
 
     try:
         pdf = pikepdf.open(str(input_path))
         root = pdf.Root
+        # PDF 2.0 Associated Files (MathML on /Formula) to register on the
+        # catalog /AF array after the struct tree is built.
+        catalog_af: list = []
 
         # MCIDs are assigned page-locally by inject_bdc_markers (the single MCID
         # authority); the struct tree below is built from the maps it returns.
@@ -769,7 +797,24 @@ def tag_untagged_pdf(
                 if el.pdf_tag == PDFTag.FIGURE and el.alt_text:
                     struct_elem_dict["/Alt"] = String(el.alt_text)
 
+                # /Formula (PDF/UA-2): attach MathML as an Associated File and a
+                # text /Alt fallback so AT can read the equation either way.
+                formula_af = None
+                if el.pdf_tag == PDFTag.FORMULA:
+                    sd = el.specialist_data or {}
+                    if "/Alt" not in struct_elem_dict:
+                        struct_elem_dict["/Alt"] = String(
+                            (el.text or "").strip() or "Mathematical formula")
+                    mathml = sd.get("mathml")
+                    if mathml:
+                        formula_af = _embed_mathml_af(
+                            pdf, mathml, stats["total_elements_written"])
+                        struct_elem_dict["/AF"] = Array([formula_af])
+
                 struct_elem = pdf.make_indirect(Dictionary(struct_elem_dict))
+                if formula_af is not None:
+                    catalog_af.append(formula_af)
+                    stats["formula_mathml_embedded"] += 1
 
                 doc_elem["/K"].append(struct_elem)
                 page_struct_owners.append((el.bbox, struct_elem))
@@ -832,6 +877,16 @@ def tag_untagged_pdf(
         struct_tree_root["/ParentTree"] = parent_tree
 
         root["/StructTreeRoot"] = struct_tree_root
+
+        # Register MathML Associated Files on the catalog /AF (PDF 2.0 7.11.4 —
+        # an associated file must be reachable from the catalog, not only from
+        # the struct element).
+        if catalog_af:
+            existing_af = root.get("/AF")
+            af_array = existing_af if isinstance(existing_af, Array) else Array([])
+            for fs in catalog_af:
+                af_array.append(fs)
+            root["/AF"] = af_array
         stats["struct_tree_created"] = True
 
         # 7. Set language

@@ -94,11 +94,12 @@ CLI: `python -m tagger.audit.act_rules <pdf> [...]` (add `--json` for the raw ag
 3. **Borderless tables** — Docling TableFormer beats GPU's `0.429 → 0.581` on TEDS.
 4. **Figure alt-text** — SigLIP zero-shot buckets + McGraw-Hill templates with caption awareness.
 5. **PDF/UA-1 + ACT enforcement** — heading-hierarchy + structural enforcers prevent the failure modes PREP and PDFix exhibit.
-6. **Local test suite** — 266 passing under `TAGGER_LAYOUT_BACKEND=cpu`, no MinerU spawned, in under 30 s.
+6. **PDF/UA-2 formula MathML** — `/Formula` elements carry MathML as a PDF 2.0 Associated File (`/AF` Supplement) + `/Alt`; LaTeX from the text layer by default, image→LaTeX (`TAGGER_FORMULA_RECOGNIZER=vlm`) optional. veraPDF UA-1 stays 106/106.
+7. **Local test suite** — 275 passing under `TAGGER_LAYOUT_BACKEND=cpu`, no MinerU spawned, in under 45 s.
 
 ## ⏳ What's parked / deferred
 
-- **PDF/UA-2 MathML for formulas** — formula recogniser (pix2tex / LaTeX-OCR / similar small CPU model) → MathML emitter → Associated File embedding. Substantial unit.
+- **Semantic formula MathML at scale** — the MathML substrate ships; richer semantic LaTeX for image-only / garbled-glyph formulas needs the image→LaTeX recogniser (`vlm` mode) activated via an isolated recogniser venv (pix2tex/UniMERNet pins conflict with the main venv, so it runs subprocess-only).
 - **Color contrast (WCAG 1.4.3)** — handled in a separate repo per the user's call.
 - **Heading-on-image semantics** on heavily scanned docs (Stage 1 OCR strips font signal, so H1/H2 distinction on scan-only pages relies on Heron region categories).
 
@@ -108,9 +109,10 @@ All thresholds and backend choices live in `tagger/config.py`. The flags users a
 
 | env var | maps to | values |
 |---|---|---|
-| `TAGGER_LAYOUT_BACKEND` | `LAYOUT.backend` | `cpu` (default) / `mineru` |
+| `TAGGER_LAYOUT_BACKEND` | `LAYOUT.backend` | `cpu` (default) / `picodet` / `mineru` |
 | `TAGGER_ALT_TEXT_MODE` | `ALT_TEXT.mode` | `siglip` (default) / `placeholder` / `vlm` |
 | `TAGGER_OCR_QUALITY` | `OCR.quality` | `speed` / `balanced` (default) / `quality` |
+| `TAGGER_FORMULA_RECOGNIZER` | `FORMULA.recognizer` | `text` (default) / `vlm` |
 
 ## 🚀 Quick start
 

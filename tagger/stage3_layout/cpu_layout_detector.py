@@ -28,8 +28,29 @@ import statistics
 
 import pdfplumber
 
-from tagger.config import PDF_NATIVE_DPI, STANDARD_DPI
+from tagger.config import LAYOUT, PDF_NATIVE_DPI, STANDARD_DPI
 from tagger.models.data_types import LayoutCategory, LayoutRegion, PageElement
+
+
+def _region_detect_all(pdf_path: str, page_num: int) -> list[tuple]:
+    """All categorised regions on a page as [(bbox_150dpi, heron_label), ...],
+    from whichever layout backend is active. `picodet` → PP-DocLayout-V3,
+    everything else → Docling Heron. Both emit the same shape + label vocabulary,
+    so callers stay backend-agnostic."""
+    if LAYOUT.backend == "picodet":
+        from tagger.stage3_layout.picodet_layout import detect_all_regions
+    else:
+        from tagger.stage5_specialists.docling_table_extractor import detect_all_regions
+    return detect_all_regions(pdf_path, page_num)
+
+
+def _region_detect_tables(pdf_path: str, page_num: int) -> list[tuple]:
+    """Table bboxes (150-DPI) from the active layout backend (see _region_detect_all)."""
+    if LAYOUT.backend == "picodet":
+        from tagger.stage3_layout.picodet_layout import detect_tables
+    else:
+        from tagger.stage5_specialists.docling_table_extractor import detect_tables
+    return detect_tables(pdf_path, page_num)
 
 _SCALE = STANDARD_DPI / PDF_NATIVE_DPI
 _BIG_RATIO = 1.15      # heading: clearly larger than body text
@@ -141,8 +162,7 @@ def _merge_docling_headings(pdf_path: str, page_num: int,
     Section-header detections. Drops Heron candidates that overlap any existing
     heading (IoU>0.3) or any table/image bbox (heading should be its own line,
     not embedded in a table or figure). Never removes an existing heading."""
-    from tagger.stage5_specialists.docling_table_extractor import detect_all_regions
-    raw = detect_all_regions(pdf_path, page_num)
+    raw = _region_detect_all(pdf_path, page_num)
     if not raw:
         return existing
     out = list(existing)
@@ -163,13 +183,33 @@ def _merge_docling_headings(pdf_path: str, page_num: int,
     return out
 
 
+def _merge_docling_formulas(pdf_path: str, page_num: int,
+                            blockers: list[tuple]) -> list[tuple]:
+    """Heron-detected Formula regions on a NATIVE page as [(bbox150, FORMULA), ...].
+    The pdfplumber path has no formula signal, so display equations would
+    otherwise be grouped into a /P Text block — Stage 9/10 then can't attach
+    MathML. Additive + guarded: drop any Heron formula overlapping an existing
+    table/image/heading (IoU>0.3) so we never reclassify a real region. Feeds
+    the PDF/UA-2 MathML Associated File on the /Formula element."""
+    raw = _region_detect_all(pdf_path, page_num)
+    if not raw:
+        return []
+    out = []
+    for bbox, label in raw:
+        if label != "Formula":
+            continue
+        if any(_box_iou(bbox, bb) > 0.3 for bb in blockers):
+            continue
+        out.append((bbox, LayoutCategory.FORMULA))
+    return out
+
+
 def _merge_docling_tables(pdf_path: str, page_num: int, lattice_boxes: list[tuple]) -> list[tuple]:
     """Augment lattice tables with Docling-layout-detected ones. Docling's layout
     model has 17 distinct categories so heading/text regions are NEVER classified
     as 'Table' — only genuine tables come out, no false-positives on prose. Dedupe
     by IoU>0.5 (lattice box wins on overlap; its bbox is tighter for ruled grids)."""
-    from tagger.stage5_specialists.docling_table_extractor import detect_tables
-    docling_boxes = detect_tables(pdf_path, page_num)
+    docling_boxes = _region_detect_tables(pdf_path, page_num)
     if not docling_boxes:
         return lattice_boxes
     merged = list(lattice_boxes)
@@ -284,8 +324,7 @@ def _detect_via_heron(pdf_path: str, page_num: int,
     page-spanning raster (it's the page-image background, not a real Picture),
     and return [(bbox_150dpi, LayoutCategory), ...] in xy-cut order. pdfplumber
     can't help here (no text layer, no rules); Heron is the right primitive."""
-    from tagger.stage5_specialists.docling_table_extractor import detect_all_regions
-    raw = detect_all_regions(pdf_path, page_num)
+    raw = _region_detect_all(pdf_path, page_num)
     if not raw:
         return []
     page_area = max(1.0, page_w * page_h)
@@ -361,10 +400,16 @@ def detect_regions(pdf_path: str, page_num: int,
         # never removes a pdfplumber-detected heading, so this is strictly
         # accuracy-positive: max possible TEDS/NID regression = 0.
         hboxes = _merge_docling_headings(pdf_path, page_num, hboxes, tboxes, iboxes)
+        # Additive Heron-detected display formulas — gives Stage 9/10 a /Formula
+        # region to attach PDF/UA-2 MathML to (additive, dedupes against
+        # table/image/heading boxes, so it can't reclassify a real region).
+        fboxes = _merge_docling_formulas(
+            pdf_path, page_num, tboxes + iboxes + [b for b, _ in hboxes])
 
     # headings come from the pdfplumber-line path; exclude their elements from body
-    # blocks (Stage 4 still matches them into the heading region by bbox).
-    blockers = tboxes + iboxes + [b for b, _ in hboxes]
+    # blocks (Stage 4 still matches them into the heading region by bbox). Formula
+    # boxes block too — their text belongs to the /Formula region, not a /P block.
+    blockers = tboxes + iboxes + [b for b, _ in hboxes] + [b for b, _ in fboxes]
     text_els = [el for el in elements
                 if (el.text or "").strip() and not _center_inside(el.bbox, blockers)]
 
@@ -374,6 +419,8 @@ def detect_regions(pdf_path: str, page_num: int,
     for b in iboxes:
         meta.append((b, LayoutCategory.PICTURE))
     for b, cat in hboxes:
+        meta.append((b, cat))
+    for b, cat in fboxes:
         meta.append((b, cat))
 
     # body text: header/footer by margin, else group consecutive lines into Text blocks
