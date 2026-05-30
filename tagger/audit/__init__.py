@@ -12,7 +12,11 @@ Callable surfaces:
   - python -m tagger.audit.act_rules | matterhorn | screen_reader <pdf> [...]
 """
 from tagger.audit.act_rules import AuditReport, audit_pdf
+from tagger.audit.alt_text_quality import check_alt_quality
 from tagger.audit.matterhorn import to_matterhorn
 from tagger.audit.screen_reader import linearize, smell_test
 
-__all__ = ["AuditReport", "audit_pdf", "to_matterhorn", "linearize", "smell_test"]
+__all__ = ["AuditReport", "audit_pdf", "to_matterhorn", "linearize", "smell_test",
+           "check_alt_quality"]
+# semantic_judge is intentionally NOT eagerly imported (its judge() pulls
+# google-genai + needs an API key); import it explicitly where used.
