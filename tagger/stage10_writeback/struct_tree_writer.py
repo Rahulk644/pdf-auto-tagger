@@ -28,6 +28,33 @@ from tagger.stage1_extraction.coord_transformer import pdf_to_standard
 logger = logging.getLogger(__name__)
 
 
+def pdf_is_signed(pdf_path) -> bool:
+    """True if the PDF carries a digital signature (AcroForm /SigFlags bit 1, a /Sig
+    field with a /V value, or a /Perms transform dict).
+
+    Stage 10 rewrites content streams and the struct tree — a destructive change that
+    invalidates any cryptographic signature, which for legal/contractual documents is a
+    correctness failure, not an accessibility win. So we must NOT modify a signed
+    document. Detection only; the caller decides to skip and emit the original unchanged.
+    """
+    try:
+        with pikepdf.open(str(pdf_path)) as pdf:
+            root = pdf.Root
+            if "/Perms" in root:
+                return True
+            af = root.get("/AcroForm")
+            if af is not None:
+                sf = af.get("/SigFlags")
+                if sf is not None and (int(sf) & 1):
+                    return True
+                for f in (af.get("/Fields", []) or []):
+                    if str(f.get("/FT", "")) == "/Sig" and f.get("/V") is not None:
+                        return True
+    except Exception:
+        return False
+    return False
+
+
 def _embed_mathml_af(pdf, mathml: str, idx: int):
     """Embed a MathML string as a PDF 2.0 Associated File and return the
     indirect /Filespec. Used to attach machine-readable maths to a /Formula

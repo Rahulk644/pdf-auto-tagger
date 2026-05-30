@@ -843,9 +843,24 @@ class AutoTaggerPipeline:
     def _stage10_write(self, input_pdf: str, output_pdf: str, doc_data: DocumentData):
         """Stage 10: Struct tree writeback."""
         from tagger.stage10_writeback.struct_tree_writer import (
+            pdf_is_signed,
             retag_existing_pdf,
             tag_untagged_pdf,
         )
+
+        # Do-no-harm: a digitally signed PDF must not be rewritten — our content-stream
+        # + struct-tree edits would invalidate the signature. Emit the original unchanged
+        # and flag it; tagging a signed doc is a separate (incremental-update) problem.
+        if pdf_is_signed(input_pdf):
+            logger.warning(
+                "[Stage 10] PDF is digitally signed — skipping writeback to preserve "
+                "the signature; output is the unmodified original."
+            )
+            if output_pdf:
+                import shutil
+                shutil.copyfile(input_pdf, output_pdf)
+            doc_data.metadata["signed_unmodified"] = True
+            return
 
         # Collect all tagged elements
         all_tagged: list[TaggedElement] = []

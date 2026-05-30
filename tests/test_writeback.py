@@ -299,3 +299,31 @@ def test_bare_url_text_autolinked(tmp_path):
     assert s_tags.count("/Link") >= 2, f"expected >=2 /Link struct elems, got {s_tags}"
     # ordinary words ("Email", "visit", "today") must NOT become links
     assert not any(u in ("Email", "visit", "today") for u in link_uris)
+
+
+def test_signed_pdf_detection_and_skip(tmp_path):
+    """Digitally signed PDFs must be detected and left UNMODIFIED — rewriting the byte
+    stream invalidates the signature (legal/contractual integrity). Do-no-harm guard;
+    49/774 docs in the baseline corpus carry a signature."""
+    from tagger.stage10_writeback.struct_tree_writer import pdf_is_signed
+
+    # unsigned plain PDF -> not detected
+    plain = pikepdf.new(); plain.add_blank_page(page_size=(612, 792))
+    p_plain = tmp_path / "plain.pdf"; plain.save(str(p_plain)); plain.close()
+    assert pdf_is_signed(str(p_plain)) is False
+
+    # signed PDF: AcroForm /SigFlags bit-1 + a /Sig field carrying a /V value
+    signed = pikepdf.new(); signed.add_blank_page(page_size=(612, 792))
+    sigfield = signed.make_indirect(pikepdf.Dictionary({
+        "/FT": pikepdf.Name("/Sig"), "/T": pikepdf.String("Signature1"),
+        "/V": signed.make_indirect(pikepdf.Dictionary({"/Type": pikepdf.Name("/Sig")}))}))
+    signed.Root["/AcroForm"] = signed.make_indirect(pikepdf.Dictionary({
+        "/SigFlags": 3, "/Fields": pikepdf.Array([sigfield])}))
+    p_signed = tmp_path / "signed.pdf"; signed.save(str(p_signed)); signed.close()
+    assert pdf_is_signed(str(p_signed)) is True
+
+    # end-to-end: the pipeline must NOT add a struct tree to the signed doc
+    out = tmp_path / "signed_out.pdf"
+    AutoTaggerPipeline().run(input_pdf=str(p_signed), output_pdf=str(out))
+    with pikepdf.open(str(out)) as o:
+        assert "/StructTreeRoot" not in o.Root, "signed PDF was modified (struct tree added)"

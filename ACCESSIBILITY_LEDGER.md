@@ -21,7 +21,7 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 
 | Requirement | Standing | Evidence |
 |---|---|---|
-| **Semantic & structural tagging** | Strong on high-value tags; fine semantic inline tags flattened to `<P>` | dp-bench overall **0.839**; suite 305 green |
+| **Semantic & structural tagging** | Strong on high-value tags; fine semantic inline tags flattened to `<P>` | dp-bench overall **0.839**; suite 306 green |
 | **Artifacting** (hide decorative) | Headers/footers/page-#s/margin-watermarks artifacted | Stage 8c `artifact_detector` |
 | **Logical reading order** | AI regions ordered by XY-cut; multi-column/floating still imperfect | NID **~0.83–0.888** |
 | **Alternative text** | *Presence* solved; *quality* is the hole | short-alt 93% guideline-compliant; long-description **0%** |
@@ -58,7 +58,7 @@ source PDF + the incumbent's tags; ~1.08M tagged elements).
 | Metric | Value | Source |
 |---|---|---|
 | veraPDF UA-1 | **compliant** (CI-gated) | `scripts/verapdf_gate.py` |
-| Test suite | **305 passed**, 3 skipped | `pytest` (cpu backend) |
+| Test suite | **306 passed**, 3 skipped | `pytest` (cpu backend) |
 | dp-bench overall | **0.839** | dp-bench |
 | Reading order (NID) | **0.83–0.888** | dp-bench / corpus |
 | Tables (TEDS) | **0.740** | dp-bench |
@@ -100,11 +100,12 @@ P, H1–H6, L/LI/Lbl/LBody, Table/TR/TH/TD, Figure, Formula (+MathML /AF, opt-in
 - ✅ `/Form` producer for widget annotations (`_tag_widget_annotations`) — `/Form`+OBJR+`/TU`-from-fieldname; 217/217 on test doc 389, audit 3→0, integrity clean, unit-tested.
 - ✅ **Link auto-detection** (`_autodetect_link_annotations`) — whole-token regex finds bare URL/email text with no covering annotation → synthesizes a functional `/Link` `Annot` (`/A /URI`), which existing `_tag_link_annotations` wraps into `/Link` struct + OBJR + `/Contents`. Verified: doc 1396 → 29 links, doc 1114 → 21 (incl `mailto:`), audit 3→0, integrity clean, unit-tested. **Known wart:** line-wrapped URLs truncate (→ deferred compound-link merge). Suite 303→**305**.
 - ✅ Convention-free coverage scorecard harness (`scratch/prep_baseline/`) — 80-doc run complete.
+- ✅ **Digital-signature safety guard** (`pdf_is_signed` + Stage 10 gate) — signed PDFs (49/774 in corpus) are detected and emitted **unmodified** (rewriting invalidates the signature); flagged `signed_unmodified`. Unit-tested end-to-end.
+- ✅ **Figure under-detection INVESTIGATED → no fix.** Diagnostic (30 docs): 20 ok/over, 6 "undercount" that are really **incumbent over-count** (we capture the actual source images; surplus correctly → Artifact per PDF4/H67), 3 incumbent-only (phantom/vector), 1 true detection-miss. The "recall 0.52 vs incumbent" is ~90% an incumbent IMG-counting artifact, not our miss. Chasing it would invent figures.
 
 ### NEXT (immediate · deterministic · measured)
-1. **Figure under-detection** (recall 0.52, ~19/52 docs missed) — diagnose: dropped inline images vs over-artifacting. The new measured #2 gap.
-2. **Redaction & digital-signature safety guards** — detect opaque rect over live text (don't surface redacted text) and signed docs (don't alter the byte-stream). Do-no-harm, high stakes for legal docs.
-3. Re-run the coverage scorecard counting links/forms from OUR OUTPUT (not source) to quantify the link-fix lift.
+1. **Redaction safety guard** — detect opaque rect over live text → don't surface redacted text. Do-no-harm, high stakes for legal docs (companion to the signature guard).
+2. Re-run the coverage scorecard counting links/forms from OUR OUTPUT (not source) to quantify the link-fix lift.
 
 ### PLANNED (will do · needs GPU or larger work · scoreboard-gated)
 - **Alt-text quality** → document-context VLM (Gemma-E4B on Modal) scored vs the McGowan rubric — turns "blue bars" into "Q3 revenue $2M→$5M". *(the genuine semantic hole; Modal earns its spend here)*
@@ -114,7 +115,7 @@ P, H1–H6, L/LI/Lbl/LBody, Table/TR/TH/TD, Figure, Formula (+MathML /AF, opt-in
 - **Form quality** → adjacent-visual-label `/TU` (not just field name), radio-button grouping.
 
 ### DEFERRED (real but low corpus prevalence / genuinely hard)
-Flowchart logical (non-geometric) reading order + connector arrows; sub-total indentation hierarchy in tables; fake/printed checkboxes (Wingdings/vector squares, non-AcroForm); TOC dot-leader artifacting; QR/barcode payload decode → alt-text; compound (multi-line) link merge; cross-page hyphenation `/ActualText`; inline `/Lang` language-switch spans; drop caps.
+**Vector-graphic figures** (logos/diagrams drawn as paths, not raster — pdfplumber doesn't see them as images; ~3–4/30 docs in the figure diagnostic); flowchart logical (non-geometric) reading order + connector arrows; sub-total indentation hierarchy in tables; fake/printed checkboxes (Wingdings/vector squares, non-AcroForm); TOC dot-leader artifacting; QR/barcode payload decode → alt-text; **compound (multi-line) link merge** (line-wrapped URLs truncate today); cross-page hyphenation `/ActualText`; inline `/Lang` language-switch spans; drop caps.
 
 ### SKIPPED (out of scope — with reason)
 - **Asian ruby/warichu tags** (Ruby/RB/RT/RP/Warichu/WT/WP) — not in corpus language scope.
