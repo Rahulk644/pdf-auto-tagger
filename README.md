@@ -138,7 +138,7 @@ All thresholds and backend choices live in `tagger/config.py`. The flags users a
 | `TAGGER_ALT_TEXT_MODE` | `ALT_TEXT.mode` | `siglip` (default) / `placeholder` / `vlm` |
 | `TAGGER_OCR_QUALITY` | `OCR.quality` | `speed` / `balanced` (default) / `quality` |
 | `TAGGER_FORMULA_RECOGNIZER` | `FORMULA.recognizer` | `text` (default) / `vlm` |
-| `TAGGER_TABLE_ENGINE` | `TABLE.engine` | `ppstructure` (default) / `slanet` / `tableformer` |
+| `TAGGER_TABLE_ENGINE` | `TABLE.engine` | `tableformer` (default) / `ppstructure` / `slanet` |
 
 ## 🚀 Quick start
 

@@ -27,10 +27,10 @@ def test_th_respected_when_present():
     assert cells[0]["is_header"] and cells[0]["ocr_text"] == "H"
 
 
-def test_engine_flag_default_is_ppstructure():
+def test_engine_flag_default_is_tableformer():
     from tagger.config import TABLE
-    # default promoted to PP-Structure after it won the full-corpus TEDS-S bench
-    # (0.906 vs TableFormer 0.839); self-gates to TableFormer if rapid_table absent.
+    # default = TableFormer: it won END-TO-END (0.567/0.721 vs PP-Structure
+    # 0.552/0.717) even though PP-Structure won the misleading isolated-crop bench.
     import os
     if "TAGGER_TABLE_ENGINE" not in os.environ:
-        assert TABLE.engine == "ppstructure"
+        assert TABLE.engine == "tableformer"

@@ -60,7 +60,7 @@ TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
 | `TAGGER_ALT_TEXT_MODE` | `ALT_TEXT.mode` | `siglip` / `placeholder` / `vlm` | `siglip` | leave default unless reproducing the legacy review-required placeholders |
 | `TAGGER_OCR_QUALITY` | `OCR.quality` | `speed` / `balanced` / `quality` | `balanced` | `quality` for noisy scans |
 | `TAGGER_FORMULA_RECOGNIZER` | `FORMULA.recognizer` | `text` / `vlm` | `text` | `vlm` (image→LaTeX) needs an ISOLATED recogniser venv — pix2tex/UniMERNet pin old x-transformers/timm that conflict with the main venv; subprocess only, graceful no-op to `text` if absent |
-| `TAGGER_TABLE_ENGINE` | `TABLE.engine` | `ppstructure` / `slanet` / `unitable` / `tableformer` | `ppstructure` | structure-model tier of the table cascade. `ppstructure` (rapid_table ONNX) won the full-corpus TEDS-S bench (0.906 vs TableFormer 0.839); cells get NATIVE pdfplumber text + TH. `slanet`=faster/≈, `tableformer`=legacy fallback (auto if rapid_table absent), `unitable`=OOMs on 8GB |
+| `TAGGER_TABLE_ENGINE` | `TABLE.engine` | `tableformer` / `ppstructure` / `slanet` / `unitable` | `tableformer` | structure-model tier of the table cascade. `tableformer` (default) won END-TO-END (0.567 TEDS / 0.721 TEDS-S vs PP-Structure 0.552/0.717) despite PP-Structure winning the *isolated-crop* bench — the mature native-text-fill + cascade beat it in-pipeline. rapid_table engines (`ppstructure`/`slanet`/`unitable`) available for experimentation; `unitable` OOMs on 8GB |
 
 ## Architecture
 

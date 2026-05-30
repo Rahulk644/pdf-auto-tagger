@@ -212,13 +212,15 @@ class TableConfig:
     #   "ppstructure" — PP-Structure EN via rapid_table (ONNX, comparable to SLANet).
     #   "unitable"    — UniTable via rapid_table (torch backend, ~480MB, more
     #                   accurate but heavier — load in its own process to avoid OOM).
-    # DEFAULT = ppstructure: it won the full-corpus TEDS-S bench (0.906 vs
-    # TableFormer v1 0.839) and, wired with native-text fill + TH headers,
-    # produces veraPDF-compliant accessible tables. Self-gates to TableFormer if
-    # rapid_table is unavailable (the cascade falls through). Set =tableformer to
-    # restore the legacy engine.
+    # DEFAULT = tableformer. PP-Structure won the ISOLATED-crop TEDS-S bench
+    # (0.906 vs 0.839) but lost END-TO-END on the real pipeline (TableFormer
+    # 0.567 TEDS / 0.721 TEDS-S vs PP-Structure 0.552 / 0.717 over the 42 dp-bench
+    # table docs) — the mature TableFormer native-text-fill + cascade beat it
+    # once detection/markdown realities are included. Lesson: validate
+    # end-to-end, not on isolated crops. rapid_table engines (ppstructure/slanet/
+    # unitable) remain available via the flag for experimentation.
     engine: str = field(default_factory=lambda: os.environ.get(
-        "TAGGER_TABLE_ENGINE", "ppstructure"))
+        "TAGGER_TABLE_ENGINE", "tableformer"))
 
     # Use pdfplumber for native PDFs
     use_pdfplumber_for_native: bool = True
