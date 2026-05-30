@@ -15,11 +15,12 @@ visual hallucination (the small-VLM failure mode). It flags e.g. "a 1.8x-body
 bold centred line you tagged /P is physically heading-shaped", reading-order
 mismatches, and mislabeled blocks.
 
-This is the PILOT wiring: the reasoner is the Gemini API (smallest model) for
-cheap iteration; production swaps in a local quantized text-LLM (llama.cpp on
-M1 / OpenVINO on x86) behind the same `judge()` seam. The LLM is fallible too,
-so output is FLAGGED DISAGREEMENTS for review + a confidence, never a
-certification — calibrated against the 35-doc expert benchmark.
+This is the PILOT wiring: the reasoner is a Llama model on the Groq API for
+cheap, fast iteration; production swaps in a local quantized text-LLM (llama.cpp
+on M1 / OpenVINO on x86) behind the same `judge()` seam — same Llama family,
+just hosted locally. The LLM is fallible too, so output is FLAGGED
+DISAGREEMENTS for review + a confidence, never a certification — calibrated
+against the 35-doc expert benchmark.
 
 NOTE: this is the deterministic-perception approach, deliberately NOT the
 screen-reader approach (a separate future experiment).
@@ -34,7 +35,7 @@ import pdfplumber
 import pikepdf
 from pikepdf import Array, Dictionary
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+DEFAULT_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
 def physical_layout(pdf_path: str, max_lines: int = 120) -> list[dict]:
@@ -114,7 +115,12 @@ Compare them and flag disagreements where our TAGS likely misrepresent the docum
 - reading-order mismatches (B's order doesn't follow A's top-to-bottom / column order);
 - a block tagged as the wrong role given its physical form.
 
-Reason ONLY over these two text structures. Do NOT invent content you cannot see in A or B.
+Rules:
+- B's roles are PDF/UA struct tags ONLY: H1-H6, P, Figure, Table, TR, TH, TD, Caption, L, LI, Lbl, LBody, Link, Note, TOC, TOCI, Formula. Refer ONLY to these. NEVER invent tags like "AU", "FC", "Author", "Title".
+- Do NOT flag an element that is ALREADY tagged H1-H6 as a "missed heading" — it is already a heading.
+- A correct heading for an author name / running header / field label is a real finding (those should be P, not H*).
+- Reason ONLY over these two text structures. Do NOT invent content you cannot see in A or B.
+
 Return STRICT JSON: {"findings":[{"issue":"...","evidence":"<quote from A and B>","severity":"high|medium|low"}], "agreement":"high|medium|low"}.
 If they agree well, return an empty findings list and agreement "high".
 
@@ -127,22 +133,24 @@ B (our tags):
 
 
 def judge(pdf_path: str, model: str | None = None) -> dict:
-    """Run the LLM judge. Requires GEMINI_API_KEY (or GOOGLE_API_KEY). Returns the
+    """Run the LLM judge (Llama on Groq). Requires GROQ_API_KEY. Returns the
     parsed JSON findings (or {'raw': text} if the model didn't return clean JSON)."""
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    key = os.environ.get("GROQ_API_KEY")
     if not key:
-        raise RuntimeError("set GEMINI_API_KEY to run the semantic judge")
-    from google import genai
+        raise RuntimeError("set GROQ_API_KEY to run the semantic judge")
+    from groq import Groq
 
     a = physical_layout(pdf_path)
     b = tag_view(pdf_path)
     prompt = _PROMPT % (json.dumps(a, ensure_ascii=False), json.dumps(b, ensure_ascii=False))
-    client = genai.Client(api_key=key)
-    resp = client.models.generate_content(model=model or DEFAULT_MODEL, contents=prompt)
-    text = (resp.text or "").strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text[text.find("{"):text.rfind("}") + 1]
+    client = Groq(api_key=key)
+    resp = client.chat.completions.create(
+        model=model or DEFAULT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+    text = (resp.choices[0].message.content or "").strip()
     try:
         return json.loads(text)
     except Exception:
@@ -153,7 +161,7 @@ def main() -> None:
     import sys
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     if not args:
-        print("usage: GEMINI_API_KEY=... python -m tagger.audit.semantic_judge <pdf> [...]")
+        print("usage: GROQ_API_KEY=... python -m tagger.audit.semantic_judge <pdf> [...]")
         sys.exit(2)
     if "--views" in sys.argv:  # inspect the two views without calling the LLM
         for p in args:

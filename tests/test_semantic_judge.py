@@ -1,7 +1,7 @@
 """Semantic judge — deterministic perception extractors (the no-LLM core).
 
-The Gemini call (judge()) needs GEMINI_API_KEY and is exercised via the pilot
-runner, not in CI. Here we test the two independent views it reasons over.
+The LLM call (judge(), Llama on Groq) needs GROQ_API_KEY and is exercised via
+the pilot runner, not in CI. Here we test the two independent views it reasons over.
 """
 import os
 
@@ -42,7 +42,6 @@ def test_tag_view_returns_roles(tmp_path):
 
 
 def test_judge_requires_key(tmp_path, monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="GROQ_API_KEY"):
         judge(_tagged(tmp_path))

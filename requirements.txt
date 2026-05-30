@@ -25,5 +25,9 @@ latex2mathml==3.81.0
 
 numpy==2.4.6
 
+# Optional: semantic-correctness judge (text-only LLM reasoner). Pilot uses
+# Groq-hosted Llama; lazily imported, only needed when running the judge.
+groq
+
 # Test runner
 pytest==9.0.3
