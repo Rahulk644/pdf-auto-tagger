@@ -358,12 +358,17 @@ def _line_size_bold(ln) -> tuple[float, bool]:
     return sz, bold
 
 
-def _heading_lineboxes(page, tboxes, iboxes) -> list[tuple]:
+def _heading_lineboxes(page, tboxes, iboxes, cboxes=()) -> list[tuple]:
     """Detect headings on pdfplumber's extract_text_lines (cpu_extract's proven path,
     MHS ~= GPU) and return [(bbox_150dpi, category)]. Keeps numbered/bold-body-size
-    headings whole, unlike Stage-2 element segmentation."""
+    headings whole, unlike Stage-2 element segmentation.
+
+    `cboxes` = Heron-detected Caption regions (150-DPI). A line whose center sits in
+    a Caption region is a figure/table caption, not a heading — bold captions like
+    'Table A2: Results ...' otherwise leak in as TITLE/SECTION (heading-scoreboard
+    precision diagnosis). Treated as a spatial blocker, same as tables/images."""
     lines = sorted(page.extract_text_lines(), key=lambda l: (l["top"], l["x0"]))
-    blockers = tboxes + iboxes
+    blockers = tboxes + iboxes + list(cboxes)
     info = []  # (line, size, bold, center150, bbox150)
     for ln in lines:
         sz, bold = _line_size_bold(ln)
@@ -492,7 +497,8 @@ def detect_regions(pdf_path: str, page_num: int,
         # No-op when docling_ibm_models / weights are unavailable.
         tboxes = _merge_docling_tables(pdf_path, page_num, tboxes, raw=raw_regions)
         iboxes = _image_boxes(page, big_image_threshold=big_image_thr)
-        hboxes = _heading_lineboxes(page, tboxes, iboxes)  # [(bbox150, category)]
+        cboxes = [b for b, lbl in (raw_regions or []) if lbl == "Caption"]
+        hboxes = _heading_lineboxes(page, tboxes, iboxes, cboxes)  # [(bbox150, category)]
         # Additive Heron-detected headings on native pages — closes the
         # documented MHS gap. Pdfplumber typography catches most headings; Heron
         # adds the semantic ones that lack a distinguishing font signal (numbered
