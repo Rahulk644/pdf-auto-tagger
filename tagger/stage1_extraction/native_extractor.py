@@ -25,6 +25,7 @@ import pdfplumber
 
 from tagger.config import STANDARD_DPI
 from tagger.models.data_types import PageClassification, PageElement, PageType
+from tagger.page_cache import open_pdf
 from tagger.stage1_extraction.coord_transformer import pdfplumber_to_standard
 
 if TYPE_CHECKING:
@@ -70,7 +71,7 @@ def extract_native_pages(
 
     results: dict[int, list[PageElement]] = {}
 
-    with pdfplumber.open(str(pdf_path)) as pdf:
+    with open_pdf(pdf_path) as pdf:
         for page_idx, page in enumerate(pdf.pages):
             page_num = page_idx + 1
             if page_num not in native_pages:

@@ -26,9 +26,8 @@ from __future__ import annotations
 import re
 import statistics
 
-import pdfplumber
-
 from tagger.config import LAYOUT, PDF_NATIVE_DPI, STANDARD_DPI
+from tagger.page_cache import open_pdf
 from tagger.models.data_types import LayoutCategory, LayoutRegion, PageElement
 
 
@@ -368,7 +367,7 @@ def detect_regions(pdf_path: str, page_num: int,
     # ...), so we use it as the layout source on these pages. NATIVE pages stay
     # on the proven pdfplumber + lattice + Docling-table-merge path.
     if page_type in ("mixed", "scanned"):
-        with pdfplumber.open(pdf_path) as pdf:
+        with open_pdf(pdf_path) as pdf:
             if page_num > len(pdf.pages):
                 return []
             page = pdf.pages[page_num - 1]
@@ -392,7 +391,7 @@ def detect_regions(pdf_path: str, page_num: int,
         # the tighter big-image threshold so OCR text isn't blocker-trapped.
 
     big_image_thr = 0.4 if page_type in ("mixed", "scanned") else 0.7
-    with pdfplumber.open(pdf_path) as pdf:
+    with open_pdf(pdf_path) as pdf:
         if page_num > len(pdf.pages):
             return []
         page = pdf.pages[page_num - 1]

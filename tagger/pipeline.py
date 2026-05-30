@@ -69,6 +69,12 @@ class AutoTaggerPipeline:
         if not input_path.exists():
             raise FileNotFoundError(f"Input PDF not found: {input_pdf}")
 
+        # Per-document IO caches (rendered page images + pdfplumber handles) are
+        # shared across stages; clear any leftovers from a prior run up front so
+        # nothing leaks between documents in a sequential batch.
+        from tagger.page_cache import clear_document_caches
+        clear_document_caches()
+
         logger.info("=" * 60)
         logger.info("AUTO-TAGGER PIPELINE START: %s", input_path.name)
         logger.info("=" * 60)
@@ -161,6 +167,9 @@ class AutoTaggerPipeline:
         logger.info("=" * 60)
         logger.info("PIPELINE COMPLETE in %.1fs", total_time)
         logger.info("=" * 60)
+
+        # Release the per-document page-image + pdfplumber caches.
+        clear_document_caches()
 
         return report
 
@@ -668,17 +677,10 @@ class AutoTaggerPipeline:
 
     def _render_page_image(self, pdf_path: str, page_num: int):
         """Render a page at STANDARD_DPI for the formula recogniser (150-DPI
-        standard space, matching region bboxes). Returns None on failure."""
-        try:
-            from PIL import Image
-            with fitz.open(str(pdf_path)) as doc:
-                if page_num - 1 >= len(doc):
-                    return None
-                pix = doc[page_num - 1].get_pixmap(dpi=STANDARD_DPI)
-                return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        except Exception as e:
-            logger.debug("Page %d render for formula recogniser failed: %s", page_num, e)
-            return None
+        standard space, matching region bboxes), reusing the shared page-image
+        cache (same render Heron/TableFormer used). Returns None on failure."""
+        from tagger.page_cache import render_page
+        return render_page(pdf_path, page_num)
 
     def _stage6_validate(self, doc_data: DocumentData):
         """Stage 6: Consistency validation."""

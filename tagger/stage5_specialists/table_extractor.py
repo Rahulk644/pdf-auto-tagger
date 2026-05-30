@@ -14,8 +14,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import pdfplumber
-
 from tagger.config import TABLE
 from tagger.models.data_types import (
     LayoutRegion,
@@ -58,7 +56,8 @@ def extract_table_native(
         return None
 
     try:
-        with pdfplumber.open(str(pdf_path)) as pdf:
+        from tagger.page_cache import open_pdf
+        with open_pdf(pdf_path) as pdf:
             if page_num > len(pdf.pages):
                 return None
 

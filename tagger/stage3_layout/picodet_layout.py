@@ -24,8 +24,6 @@ from __future__ import annotations
 
 import logging
 
-from tagger.config import STANDARD_DPI
-
 logger = logging.getLogger(__name__)
 
 # PP-DocLayout-V3's raw class names -> Heron's 17-class label strings, so the
@@ -100,15 +98,12 @@ def detect_all_regions(pdf_path, page_num: int) -> list[tuple]:
     if not _load():
         return []
     try:
-        import fitz
         import torch
-        from PIL import Image
+        from tagger.page_cache import render_page
 
-        with fitz.open(str(pdf_path)) as doc:
-            if page_num - 1 >= len(doc):
-                return []
-            pix = doc[page_num - 1].get_pixmap(dpi=STANDARD_DPI)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        img = render_page(pdf_path, page_num)
+        if img is None:
+            return []
 
         inputs = _proc(images=[img], return_tensors="pt")
         with torch.no_grad():

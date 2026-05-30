@@ -19,6 +19,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Import the converter once at module load rather than per formula. None if the
+# (hard) dependency is somehow missing → callers fall back to /Alt-only.
+try:
+    from latex2mathml.converter import convert as _convert
+except Exception as e:  # pragma: no cover - latex2mathml is a pinned dep
+    logger.warning("latex2mathml unavailable, no MathML emitted: %s", e)
+    _convert = None
+
 
 def latex_to_mathml(latex: str, is_inline: bool = False) -> str | None:
     """Convert a LaTeX string to a MathML document string.
@@ -28,16 +36,13 @@ def latex_to_mathml(latex: str, is_inline: bool = False) -> str | None:
     error (the formula then ships with /Alt text only — still PDF/UA-1 valid)."""
     if not latex or not latex.strip():
         return None
+    if _convert is None:
+        return None
     # \text{...} wrappers are the extractor's fallback for non-LaTeX-looking
     # content; they convert fine but add no math semantics. Still emit — a
     # MathML <mtext> is a valid, readable representation.
     try:
-        from latex2mathml.converter import convert
-    except Exception as e:  # pragma: no cover - latex2mathml is a hard dep
-        logger.warning("latex2mathml unavailable, no MathML emitted: %s", e)
-        return None
-    try:
-        mathml = convert(latex.strip())
+        mathml = _convert(latex.strip())
     except Exception as e:
         logger.debug("LaTeX→MathML failed for %r: %s", latex[:60], e)
         return None

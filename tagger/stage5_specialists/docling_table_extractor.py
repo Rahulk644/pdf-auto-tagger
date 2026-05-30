@@ -110,13 +110,10 @@ def detect_all_regions(pdf_path: "str | Path", page_num: int) -> list[tuple]:
     if not _load_layout():
         return []
     try:
-        import fitz
-        from PIL import Image
-        with fitz.open(str(pdf_path)) as doc:
-            if page_num - 1 >= len(doc):
-                return []
-            pix = doc[page_num - 1].get_pixmap(dpi=STANDARD_DPI)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        from tagger.page_cache import render_page
+        img = render_page(pdf_path, page_num)
+        if img is None:
+            return []
         out = []
         for det in _layout.predict(img):
             bbox = (float(det["l"]), float(det["t"]),
@@ -138,14 +135,11 @@ def extract_table(pdf_path: "str | Path", page_num: int,
     if not _load_tf():
         return None
     try:
-        import fitz
-        from PIL import Image
         rx0, ry0, rx1, ry1 = region.bbox
-        with fitz.open(str(pdf_path)) as doc:
-            if page_num - 1 >= len(doc):
-                return None
-            pix = doc[page_num - 1].get_pixmap(dpi=STANDARD_DPI)
-            page_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        from tagger.page_cache import render_page
+        page_img = render_page(pdf_path, page_num)  # shared with Heron (same page)
+        if page_img is None:
+            return None
 
         # TFPredictor.multi_table_predict expects an `iocr_page` dict (with `image`
         # = numpy ndarray, and `tokens` = OCR word cells) plus a list of table_bboxes.
@@ -188,9 +182,9 @@ def extract_table(pdf_path: "str | Path", page_num: int,
 def _native_word_cells(pdf_path, page_num):
     """pdfplumber word boxes in 150-DPI standard coords, as Docling 'OCR cells'.
     Each token needs an `id`; CellMatcher rejects the dict without it."""
-    import pdfplumber
+    from tagger.page_cache import open_pdf
     out = []
-    with pdfplumber.open(str(pdf_path)) as pdf:
+    with open_pdf(pdf_path) as pdf:
         if page_num - 1 >= len(pdf.pages):
             return out
         page = pdf.pages[page_num - 1]
@@ -208,13 +202,13 @@ def _build_cells_from_tf(td, pdf_path, page_num):
     """Convert TableFormer's tf_responses into our cells_data shape, populating
     text + merged_from by char-center matching against pdfplumber (TableFormer
     outputs cell bboxes + row/column indices but NOT text)."""
-    import pdfplumber
+    from tagger.page_cache import open_pdf
     table_cells = td.get("tf_responses") or []
     if not table_cells:
         return []
 
     chars = []  # (char_idx, cx_std, cy_std, text)
-    with pdfplumber.open(str(pdf_path)) as pdf:
+    with open_pdf(pdf_path) as pdf:
         if page_num - 1 >= len(pdf.pages):
             return []
         page = pdf.pages[page_num - 1]

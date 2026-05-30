@@ -140,6 +140,13 @@ Stage 10  struct_tree_writer   Builds PDF struct tree (in READING order, not
 
 Read-only checker — separate from the tagging pipeline. Reports per-rule pass / fail / N/A for the eight rules our pipeline cares about (`ACT-6cfa84`, `ACT-36b590`, `ACT-b40fd1`, `PDFUA-7.4.2`, `PDFUA-7.1-10`, `PDFUA-7.5.2`, `PDFUA-7.5.3`, `PDFUA-7.1-1`). Use this to compare our tagged output against PREP / PDFix / any other tool's tagged output deterministically.
 
+### Shared per-document IO cache (`tagger/page_cache.py`)
+
+Stages 1/3/5 used to independently rasterize and re-open the same PDF. `page_cache` centralizes both:
+- `render_page(pdf, page, dpi=150)` — fitz-rendered page image, `lru_cache(maxsize=8)` (bounded for M1 8 GB). Shared by Heron (`docling_table_extractor.detect_all_regions`), TableFormer (`extract_table`), picodet, and the formula renderer. Callers treat the result as read-only (`np.array` / `.crop` copy).
+- `open_pdf(path)` — context manager yielding a cached `pdfplumber.PDF` (one open per document); a drop-in for `with pdfplumber.open(...)` that does NOT close on exit.
+- `clear_document_caches()` — called by `pipeline.run()` at start (defensive) and before return; sequential-run safe (fan-out is process-level, so module caches are per-process). Any NEW per-page rasterization or pdfplumber access should go through this module, never a fresh `fitz.open` / `pdfplumber.open`.
+
 ### Key data flow invariants
 
 **Coordinate spaces** — Two spaces coexist and must never be mixed:
