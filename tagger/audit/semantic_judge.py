@@ -157,6 +157,89 @@ def judge(pdf_path: str, model: str | None = None) -> dict:
         return {"raw": text}
 
 
+# --------------------------------------------------------------------------
+# Precision path: deterministic candidate-generation -> LLM adjudication.
+# The free-hunt judge() over-flags (it returns "low agreement" even on clean
+# docs). Instead, generate physical-vs-tag mismatch CANDIDATES deterministically
+# and have the LLM adjudicate ONLY those — it can't invent issues that aren't
+# corroborated by a real physical/tag disagreement.
+# --------------------------------------------------------------------------
+import re as _re
+
+
+def _norm(s: str) -> str:
+    return _re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def candidates(pdf_path: str) -> list[dict]:
+    """Deterministic physical-vs-tag mismatches (NO LLM). Aligns View A
+    (physical lines) to View B (tagged elements) by text and flags where the
+    physical form contradicts the assigned tag. Uses RAW physical thresholds —
+    independent of the Stage-8 font-tier ranker — so it's a genuine cross-check,
+    not a re-run of our own heading logic."""
+    A = physical_layout(pdf_path, max_lines=300)
+    B = [b for b in tag_view(pdf_path, max_items=400) if b["text"]]
+    bnorm = [(b["role"], _norm(b["text"])) for b in B]
+    out: list[dict] = []
+    for a in A:
+        at = _norm(a["text"])
+        if len(at) < 3:
+            continue
+        role = next((r for r, bn in bnorm if at in bn or bn in at), None)
+        if role is None:
+            continue
+        looks_heading = (a["rel_size"] >= 1.25
+                         or (a["bold"] and len(a["text"]) <= 60
+                             and a["text"][-1:] not in ".,;:"))
+        is_h = role.startswith("H") and role[1:2].isdigit()
+        if looks_heading and role == "P":
+            out.append({"type": "possible_missed_heading", "text": a["text"][:90],
+                        "physical": f"rel_size={a['rel_size']}, bold={a['bold']}, pos={a['pos']}",
+                        "tag": role})
+        elif (not looks_heading) and a["rel_size"] < 1.1 and not a["bold"] and is_h:
+            out.append({"type": "possible_over_heading", "text": a["text"][:90],
+                        "physical": f"rel_size={a['rel_size']}, bold={a['bold']}",
+                        "tag": role})
+    return out
+
+
+_ADJ_PROMPT = """You are adjudicating CANDIDATE accessibility-tagging errors in a PDF.
+Each candidate pairs a text line's PHYSICAL form (font size relative to body text, bold, position) with the TAG we assigned. Decide if our tag is WRONG.
+Be CONSERVATIVE — only "error" when the physical form clearly contradicts the tag:
+- body-size, non-bold text tagged H1-H6 => error (over-heading);
+- a large (rel_size>=1.3) or bold standalone short line tagged P => likely a real missed heading;
+- BUT author names, dates, field labels ("Title", "Journal"), running headers, and figure/table captions are CORRECTLY P even if bold/large — mark these "acceptable".
+Return STRICT JSON {"verdicts":[{"text":"...","tag":"...","verdict":"error|acceptable","reason":"..."}]}.
+Candidates:
+%s
+"""
+
+
+def judge_candidates(pdf_path: str, model: str | None = None) -> dict:
+    """Precision path: deterministic candidates -> LLM adjudicates only those.
+    Returns {'candidates': n, 'verdicts': [...]} ; verdicts with verdict=='error'
+    are the corroborated findings."""
+    cands = candidates(pdf_path)
+    if not cands:
+        return {"candidates": 0, "verdicts": []}
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        raise RuntimeError("set GROQ_API_KEY to run the semantic judge")
+    from groq import Groq
+    client = Groq(api_key=key)
+    resp = client.chat.completions.create(
+        model=model or DEFAULT_MODEL,
+        messages=[{"role": "user", "content": _ADJ_PROMPT % json.dumps(cands, ensure_ascii=False)}],
+        temperature=0, response_format={"type": "json_object"})
+    text = (resp.choices[0].message.content or "").strip()
+    try:
+        out = json.loads(text)
+    except Exception:
+        return {"candidates": len(cands), "raw": text}
+    out["candidates"] = len(cands)
+    return out
+
+
 def main() -> None:
     import sys
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
@@ -172,9 +255,17 @@ def main() -> None:
             for r in tag_view(p)[:15]:
                 print("  ", r)
         return
+    if "--candidates" in sys.argv:  # deterministic candidates, no LLM
+        for p in args:
+            print(f"\n== {p} ==")
+            print(json.dumps(candidates(p), indent=2, ensure_ascii=False))
+        return
+    # default: the precision path (deterministic candidates -> LLM adjudication).
+    # use --free-hunt for the original unconstrained judge().
+    fn = judge if "--free-hunt" in sys.argv else judge_candidates
     for p in args:
         print(f"\n== {p} ==")
-        print(json.dumps(judge(p), indent=2, ensure_ascii=False))
+        print(json.dumps(fn(p), indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

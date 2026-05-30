@@ -7,7 +7,10 @@ import os
 
 import pytest
 
-from tagger.audit.semantic_judge import physical_layout, tag_view, judge
+from tagger.audit.semantic_judge import (
+    physical_layout, tag_view, judge, candidates, judge_candidates,
+)
+import tagger.audit.semantic_judge as sj
 
 FIXTURE = "tests/fixtures/conformance/native_scholarly.pdf"
 
@@ -45,3 +48,22 @@ def test_judge_requires_key(tmp_path, monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="GROQ_API_KEY"):
         judge(_tagged(tmp_path))
+
+
+def test_candidates_are_wellformed(tmp_path):
+    """Deterministic candidate-generation (no LLM) returns physical-vs-tag
+    mismatches as structured dicts."""
+    cands = candidates(_tagged(tmp_path))
+    assert isinstance(cands, list)
+    for c in cands:
+        assert {"type", "text", "physical", "tag"} <= set(c)
+        assert c["type"] in ("possible_missed_heading", "possible_over_heading")
+
+
+def test_judge_candidates_no_llm_when_empty(tmp_path, monkeypatch):
+    """The precision path must NOT call the LLM (no key needed) when the
+    deterministic step finds zero candidates."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(sj, "candidates", lambda p: [])
+    out = judge_candidates(_tagged(tmp_path))
+    assert out == {"candidates": 0, "verdicts": []}
