@@ -1,6 +1,6 @@
 """Read-only conformance audit layer.
 
-Separate from the tagging pipeline. Given a tagged PDF (ours, PREP, PDFix, or
+Separate from the tagging pipeline. Given a tagged PDF (ours, the incumbent, PDFix, or
 any other) it walks the struct tree and the catalog and reports per-rule
 pass/fail counts for the W3C ACT and PDF/UA-1 rules we explicitly support.
 

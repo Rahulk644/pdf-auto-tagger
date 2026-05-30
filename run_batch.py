@@ -3,11 +3,11 @@ from pathlib import Path
 from tagger.pipeline import AutoTaggerPipeline
 
 pdfs = [
-    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/CITY OF MIRAMAR, FLORIDA.pdf",
-    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/Missouri State Epidemiological Profile July 2018.pdf",
-    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/Osteoarthritis.pdf",
-    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/Summary of Revenues and Expenditures.pdf",
-    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs/nyvra-factsheet.pdf"
+    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PDF & Reports/incumbent PDFs/CITY OF MIRAMAR, FLORIDA.pdf",
+    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PDF & Reports/incumbent PDFs/Missouri State Epidemiological Profile July 2018.pdf",
+    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PDF & Reports/incumbent PDFs/Osteoarthritis.pdf",
+    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PDF & Reports/incumbent PDFs/Summary of Revenues and Expenditures.pdf",
+    "/Users/rahulkhatri/Downloads/pdf_tag_tool/PDF & Reports/incumbent PDFs/nyvra-factsheet.pdf"
 ]
 
 out_dir = Path("/Users/rahulkhatri/Tagger/output_batch")

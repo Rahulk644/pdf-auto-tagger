@@ -48,7 +48,7 @@ def run_tagger_remotely(pdf_bytes: bytes, filename: str) -> tuple[bytes, bytes]:
 
 @app.local_entrypoint()
 def main():
-    UNTAGGED_DIR = "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/UNTAGGED PDFs"
+    UNTAGGED_DIR = "/Users/rahulkhatri/Downloads/pdf_tag_tool/PDF & Reports/UNTAGGED PDFs"
     pdfs = [
         "/Users/rahulkhatri/Tagger/miramar_untagged.pdf",
         f"{UNTAGGED_DIR}/Summary of Revenues and Expenditures.pdf",

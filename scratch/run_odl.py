@@ -1,7 +1,7 @@
 import time
 import opendataloader_pdf
 
-SRC = "/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/UNTAGGED PDFs"
+SRC = "/Users/rahulkhatri/Downloads/pdf_tag_tool/PDF & Reports/UNTAGGED PDFs"
 OUT = "/Users/rahulkhatri/Tagger/output_odl"
 
 inputs = [

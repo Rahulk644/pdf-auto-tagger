@@ -21,7 +21,7 @@ app = modal.App("qa-runner-all5")
 @app.local_entrypoint()
 def main():
     OUT = Path("/Users/rahulkhatri/Tagger/output_modal")
-    RES = Path("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal_stage8")
+    RES = Path("/Users/rahulkhatri/QA Tool/scratch/qa_results_modal_stage8")
     RES.mkdir(parents=True, exist_ok=True)
 
     pdfs = [

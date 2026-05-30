@@ -46,7 +46,7 @@ It runs in two interchangeable layout backends, selected by `LAYOUT.backend` (en
 
 ### Read-only conformance audit layer (`tagger/audit/`)
 
-Separate from the tagging pipeline. Takes any tagged PDF (ours, PREP, PDFix, anything) and reports per-rule pass / fail / N/A for the eight rules we explicitly cover:
+Separate from the tagging pipeline. Takes any tagged PDF (ours, the incumbent, PDFix, anything) and reports per-rule pass / fail / N/A for the eight rules we explicitly cover:
 
 ```
 ACT-6cfa84   /  WCAG 1.1.1   Figure has /Alt or /ActualText
@@ -97,12 +97,12 @@ not the model. TableFormer stays the default.
 
 **Audit batch (14 real-world tagged PDFs):**
 
-| validator | OURS | PREP | PDFix |
+| validator | OURS | the incumbent | PDFix |
 |---|---|---|---|
 | veraPDF UA-1 compliant | **9/14** | 6/14 | 9/14 |
 | W3C ACT pass / fail / N/A | **84 / 0 / 28** | 84 / **2** / 26 | 77 / **3** / 32 |
 
-The CPU pipeline beats GPU on every dp-bench metric and is the only one of the three with zero ACT-rule failures across the audit batch — the Stage-8 enforcers catch exactly the failure modes PREP and PDFix exhibit.
+The CPU pipeline beats GPU on every dp-bench metric and is the only one of the three with zero ACT-rule failures across the audit batch — the Stage-8 enforcers catch exactly the failure modes the incumbent and PDFix exhibit.
 
 ## 4. Architecture notes
 

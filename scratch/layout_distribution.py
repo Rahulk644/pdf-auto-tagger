@@ -1,20 +1,20 @@
-"""Layout-accuracy harness — phase 0: struct-tag distribution, ours vs PREP.
+"""Layout-accuracy harness — phase 0: struct-tag distribution, ours vs the incumbent.
 
 The cheapest tier of the layout-accuracy harness (the third eval axis: did each
 region get the *right* tag, vs veraPDF's "is it tagged at all" and Gemma's noisy
 "is the tag defensible"). A pure struct-tree walk — no token alignment, no GPU —
-it tabulates struct-element tag counts for each (PREP ground-truth, our output)
+it tabulates struct-element tag counts for each (the incumbent ground-truth, our output)
 pair and surfaces systematic divergences (figures dropped, headings
 over-promoted, lists not built, table grids over-segmented) in seconds. Run it
 as a regression guard after any structural change.
 
-PREP is a STRONG REFERENCE, not gold: it fails veraPDF on 3/5 corpus docs and
+the incumbent is a STRONG REFERENCE, not gold: it fails veraPDF on 3/5 corpus docs and
 self-reports ~82% accuracy. Read deltas as "where we systematically diverge",
 NOT "our errors" — adjudicating who is right needs the hand-labeled gold subset.
 
 Usage:
-  .venv3/bin/python scratch/layout_distribution.py                  # PREP corpus
-  .venv3/bin/python scratch/layout_distribution.py PREP.pdf OURS.pdf  # one pair
+  .venv3/bin/python scratch/layout_distribution.py                  # the incumbent corpus
+  .venv3/bin/python scratch/layout_distribution.py the incumbent.pdf OURS.pdf  # one pair
 """
 import sys
 from collections import Counter
@@ -23,10 +23,10 @@ from pathlib import Path
 # tag_counts promoted to the benchmark package (single source). Run with PYTHONPATH=.
 from tagger.benchmark.struct_utils import tag_counts
 
-_PREP = Path("/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs")
+_PREP = Path("/Users/rahulkhatri/Downloads/pdf_tag_tool/PDF & Reports/incumbent PDFs")
 _OURS = Path("/Users/rahulkhatri/Tagger/output_modal")
 
-# (label, PREP ground-truth filename, our output path). Miramar's fresh output is
+# (label, the incumbent ground-truth filename, our output path). Miramar's fresh output is
 # miramar_untagged.pdf (the same-named file in output_modal is a stale old run).
 DEFAULT_PAIRS = [
     ("nyvra", "nyvra-factsheet.pdf", "nyvra-factsheet.pdf"),
@@ -52,20 +52,20 @@ def _row(label: str, src: str, counts: Counter) -> str:
 def compare(pairs) -> None:
     header = " ".join(f"{k.replace('/', ''):>5s}" for k in COLUMNS)
     print(f"{'doc':9s} {'src':4s} {header}")
-    totals = {"PREP": Counter(), "OURS": Counter()}
+    totals = {"the incumbent": Counter(), "OURS": Counter()}
     for label, prep_path, our_path in pairs:
         cp = tag_counts(prep_path) if Path(prep_path).exists() else None
         co = tag_counts(our_path) if Path(our_path).exists() else None
         if cp is not None:
-            print(_row(label, "PREP", cp)); totals["PREP"].update(cp)
+            print(_row(label, "the incumbent", cp)); totals["the incumbent"].update(cp)
         if co is not None:
             print(_row(label, "OURS", co)); totals["OURS"].update(co)
         print()
-    print(_row("TOTAL", "PREP", totals["PREP"]))
+    print(_row("TOTAL", "the incumbent", totals["the incumbent"]))
     print(_row("TOTAL", "OURS", totals["OURS"]))
     # Headline divergences worth watching.
-    fp, fo = totals["PREP"].get("/Figure", 0), totals["OURS"].get("/Figure", 0)
-    print(f"\nFigure coverage (corpus): ours {fo} vs PREP {fp}"
+    fp, fo = totals["the incumbent"].get("/Figure", 0), totals["OURS"].get("/Figure", 0)
+    print(f"\nFigure coverage (corpus): ours {fo} vs the incumbent {fp}"
           f"  ({fo / fp:.0%} of reference)" if fp else "")
 
 

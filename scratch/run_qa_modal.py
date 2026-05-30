@@ -431,7 +431,7 @@ Schema:
 @app.local_entrypoint()
 def main():
     OUTPUT_DIR = Path("/Users/rahulkhatri/Tagger/output_modal")
-    RESULTS_DIR = Path("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal")
+    RESULTS_DIR = Path("/Users/rahulkhatri/QA Tool/scratch/qa_results_modal")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     pdfs = [

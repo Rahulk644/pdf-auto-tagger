@@ -7,7 +7,7 @@ Endpoints:
   POST /extract      — Upload a PDF, run Stages 0-2 (extract + merge)
   GET  /health       — Health check
 
-Port 5002 (avoids conflict with PREP-QA-Tool on 5001).
+Port 5002 (avoids conflict with the incumbent-QA-Tool on 5001).
 """
 
 from __future__ import annotations

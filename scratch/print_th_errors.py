@@ -1,6 +1,6 @@
 import json
 
-with open('/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal/miramar_untagged_qa_report.json') as f:
+with open('/Users/rahulkhatri/QA Tool/scratch/qa_results_modal/miramar_untagged_qa_report.json') as f:
     data = json.load(f)
 
 for page_data in data.get("results", []):

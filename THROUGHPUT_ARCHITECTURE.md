@@ -116,6 +116,6 @@ This is what makes the accessibility-first positioning portable: the conformant-
 - ~2.2 s/doc on M1; pages/hr/container ≈ ~9,000 [projected]; ~$5 per 1M pages on commodity CPU.
 - Embarrassingly parallel at the page level across cores and containers.
 - MinerU/GPU path retained for legacy parity; ~2.7× per-container speedup banked via `layout_detect`; page-level fan-out byte-identical and load-balanced.
-- 9/14 veraPDF UA-1 compliant on the audit batch (same as PDFix, ahead of PREP's 6/14); zero ACT-rule failures on the same batch (PREP has 2, PDFix has 3).
+- 9/14 veraPDF UA-1 compliant on the audit batch (same as PDFix, ahead of the incumbent's 6/14); zero ACT-rule failures on the same batch (the incumbent has 2, PDFix has 3).
 - Runs on commodity infra: no GPU, no AGPL, no MinerU required.
 </content>

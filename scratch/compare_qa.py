@@ -1,12 +1,12 @@
-"""Compile PREP vs my-pipeline (pre-S8, Stage8 before-fix, Stage8+fix) vs OpenDataLoader."""
+"""Compile the incumbent vs my-pipeline (pre-S8, Stage8 before-fix, Stage8+fix) vs OpenDataLoader."""
 import json
 from pathlib import Path
 
-MODAL = Path("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal")
-S8_PRE = Path("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal_stage8_beforefix")
-S8_LIST = Path("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal_stage8_listfix")
-S8_TOC = Path("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal_stage8")
-ODL = Path("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_odl")
+MODAL = Path("/Users/rahulkhatri/QA Tool/scratch/qa_results_modal")
+S8_PRE = Path("/Users/rahulkhatri/QA Tool/scratch/qa_results_modal_stage8_beforefix")
+S8_LIST = Path("/Users/rahulkhatri/QA Tool/scratch/qa_results_modal_stage8_listfix")
+S8_TOC = Path("/Users/rahulkhatri/QA Tool/scratch/qa_results_modal_stage8")
+ODL = Path("/Users/rahulkhatri/QA Tool/scratch/qa_results_odl")
 
 
 def accuracy(path: Path):
@@ -37,7 +37,7 @@ def f(a):
     return f"{a[2]:.1%}" if a else "(pending)"
 
 
-print(f"{'Document':16}{'PREP':>7}{'pre-S8':>9}{'list-fix':>10}{'TOC-fix':>9}{'ODL':>8}")
+print(f"{'Document':16}{'the incumbent':>7}{'pre-S8':>9}{'list-fix':>10}{'TOC-fix':>9}{'ODL':>8}")
 print("-" * 60)
 for name, prep, pre_p, stem, odl_p in DOCS:
     pre = accuracy(pre_p)

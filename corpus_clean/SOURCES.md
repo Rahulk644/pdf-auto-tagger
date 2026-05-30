@@ -1,8 +1,8 @@
 # Clean corpus — batch 1 (2026-05-28)
 
 Genuinely-untagged, public-domain PDFs sourced from the public internet, for testing
-the tagger's generalization on documents **PREP never touched** (removing the
-"PREP-derived inputs" asterisk on the 5/5-vs-3/5 result).
+the tagger's generalization on documents **the incumbent never touched** (removing the
+"incumbent-derived inputs" asterisk on the 5/5-vs-3/5 result).
 
 Selection rules applied to every file:
 - **Public domain** (US federal work, or pre-1929 work in the US public domain).
@@ -44,4 +44,4 @@ Gaps — deliberately or unavoidably absent this batch:
   sources in batch 2.
 
 Next step: run the batch through the pipeline (Modal) and grade with veraPDF UA1 to measure
-generalization beyond the PREP-derived corpus.
+generalization beyond the incumbent-derived corpus.

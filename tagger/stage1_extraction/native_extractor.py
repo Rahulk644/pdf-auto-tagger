@@ -10,7 +10,7 @@ Extracts every character from native PDF pages with full font metadata:
 This is the extraction path for pages classified as "native" by Stage 0.
 Scanned pages use the MinerU2.5 OCR path instead (scanned_extractor.py).
 
-Design note: This borrows patterns from PREP-QA-Tool's
+Design note: This borrows patterns from the incumbent-QA-Tool's
 extract_pdfplumber_data() but outputs PageElement dataclasses instead
 of the raw dict format, and normalizes coordinates immediately.
 """

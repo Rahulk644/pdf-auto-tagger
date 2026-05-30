@@ -8,7 +8,7 @@ How: walk the struct tree to build (page_index, page-local MCID) -> /S tag, then
 read pdfplumber words with their mcid and look the tag up. Words whose mcid is
 None or unmapped are tagged "Artifact" (marked artifact or untagged content).
 
-Because PREP's tagged PDF and ours tag the SAME source document, tokens align
+Because the incumbent's tagged PDF and ours tag the SAME source document, tokens align
 near-exactly by position across the two — the substrate for phase-2 token-level
 tag agreement (see scratch/layout_agreement.py) and figure-IoU coverage.
 

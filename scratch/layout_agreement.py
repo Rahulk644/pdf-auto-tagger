@@ -1,21 +1,21 @@
 """Layout-accuracy harness — phase 2b/3: token tag-agreement + figure-IoU coverage.
 
-Builds on the phase-2a normalizer (scratch/layout_tokens.py). Because PREP's tagged
+Builds on the phase-2a normalizer (scratch/layout_tokens.py). Because the incumbent's tagged
 PDF and ours tag the SAME source document, tokens align near-exactly by position,
 so we can compare the tag each side assigned token-by-token:
 
-  - Tag-agreement confusion matrix (PREP tag x our tag) over positionally-aligned
+  - Tag-agreement confusion matrix (the incumbent tag x our tag) over positionally-aligned
     word tokens → which tags we get right and where we systematically diverge
     (e.g. real content we hide as Artifact, headings we flatten to P).
-  - Figure-IoU coverage: of PREP's Figure-tagged images, how many we also tag
+  - Figure-IoU coverage: of the incumbent's Figure-tagged images, how many we also tag
     Figure (IoU-matched), vs leave as Artifact.
 
-PREP is a STRONG REFERENCE, not gold — read disagreements as "where we diverge",
+the incumbent is a STRONG REFERENCE, not gold — read disagreements as "where we diverge",
 adjudicate with the 4-page gold subset (see [[project-layout-harness]]).
 
 Usage:
-  .venv3/bin/python scratch/layout_agreement.py                 # PREP corpus
-  .venv3/bin/python scratch/layout_agreement.py PREP.pdf OURS.pdf
+  .venv3/bin/python scratch/layout_agreement.py                 # the incumbent corpus
+  .venv3/bin/python scratch/layout_agreement.py the incumbent.pdf OURS.pdf
 """
 import sys
 from collections import Counter, defaultdict
@@ -87,7 +87,7 @@ def figure_images(pdf_path):
 
 
 def figure_coverage(prep_pdf, our_pdf, thr=0.5):
-    """Fraction of PREP figure-images IoU-matched by an our figure-image."""
+    """Fraction of the incumbent figure-images IoU-matched by an our figure-image."""
     pf, of = figure_images(prep_pdf), figure_images(our_pdf)
     covered = 0
     for pp, pb in pf:
@@ -103,7 +103,7 @@ def report(pairs):
     total = len(pairs)
     agree = sum(n for (p, o), n in cm.items() if p == o)
     print(f"  aligned tokens: {total}   agreement: {agree/total:.1%}" if total else "  no aligned tokens")
-    print(f"  {'PREP|ours':12s}" + "".join(f"{o:>9s}" for o in our_tags) + f"{'recall':>9s}")
+    print(f"  {'the incumbent|ours':12s}" + "".join(f"{o:>9s}" for o in our_tags) + f"{'recall':>9s}")
     for p in prep_tags:
         row = sum(cm.get((p, o), 0) for o in our_tags)
         cells = "".join(f"{cm.get((p, o), 0):9d}" for o in our_tags)
@@ -123,12 +123,12 @@ def run(pairs):
         cov, npf, nof = figure_coverage(prep_path, our_path)
         agree = sum(1 for a, b in matched if a == b)
         print(f"\n=== {label} ===")
-        print(f"  tokens PREP={len(pp)} ours={len(op)}; aligned={len(matched)} "
+        print(f"  tokens the incumbent={len(pp)} ours={len(op)}; aligned={len(matched)} "
               f"(ours_unaligned={ou}, prep_unaligned={pu})")
         print(f"  token agreement: {agree/len(matched):.1%}" if matched else "  no tokens")
-        print(f"  figure-image coverage: {cov}/{npf} PREP figures matched "
+        print(f"  figure-image coverage: {cov}/{npf} the incumbent figures matched "
               f"(ours has {nof} figure-images)")
-    print("\n=== CORPUS confusion matrix (PREP tag -> our tag) ===")
+    print("\n=== CORPUS confusion matrix (the incumbent tag -> our tag) ===")
     report(all_pairs)
 
 

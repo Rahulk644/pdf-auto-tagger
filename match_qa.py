@@ -8,7 +8,7 @@ pipe_elements = pipeline.get("elements", [])
 print(f"Loaded {len(pipe_elements)} pipeline elements")
 
 # Read QA
-with open("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal/miramar_untagged_qa_report.json") as f:
+with open("/Users/rahulkhatri/QA Tool/scratch/qa_results_modal/miramar_untagged_qa_report.json") as f:
     qa = json.load(f)
 
 # The QA report only has MCIDs.

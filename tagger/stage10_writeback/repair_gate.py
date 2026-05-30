@@ -1,6 +1,6 @@
 """Detect / classify / gate / repair for Stage-10 structural changes.
 
-PREP policy (per Rajat) is that the tool never silently changes a client's
+the incumbent policy (per Rajat) is that the tool never silently changes a client's
 document. Our pipeline makes *additive* accessibility changes (struct tree,
 marked content, artifact wrapping, link tagging) plus a few *modifying* repairs
 that alter real source objects (font descriptors, content-stream show strings).
@@ -33,7 +33,7 @@ ADDITIVE = "additive"
 MODIFYING = "modifying"
 
 # repair_mode values
-AUTO = "auto"            # apply all modifying repairs (default; differentiator vs PREP)
+AUTO = "auto"            # apply all modifying repairs (default; differentiator vs the incumbent)
 CONFIRM = "confirm"      # apply only modifying repairs whose finding_id is approved
 FLAG_ONLY = "flag-only"  # never apply modifying repairs; only report them
 MODES = (AUTO, CONFIRM, FLAG_ONLY)

@@ -4,7 +4,7 @@ Stage 2 — Text merger.
 Converts individual character-level PageElements into merged text blocks:
     chars → words → lines → paragraphs
 
-This directly addresses the #1 bug found in PREP comparison:
+This directly addresses the #1 bug found in the incumbent comparison:
 text fragmentation where single words or even characters were tagged
 as separate elements.
 

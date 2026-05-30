@@ -53,7 +53,7 @@ class PageClassifierConfig:
     min_char_density: float = 0.001
 
     # Char-density floor for a "real text page" — a normal text page sits around
-    # 30+ chars/sq.in.; PREP-tagged image-of-text docs with only a visible header
+    # 30+ chars/sq.in.; the incumbent-tagged image-of-text docs with only a visible header
     # come out at ~1-3 (e.g. the MOU appendix: 120 chars + 60% image + 1.28
     # density). Below this with significant image coverage we override the
     # "many chars + some images = NATIVE" path to MIXED so OCR runs on the image.
@@ -502,7 +502,7 @@ class PipelineConfig:
 
     # Flask API settings
     flask_host: str = "0.0.0.0"
-    flask_port: int = 5002  # 5001 is PREP-QA-Tool
+    flask_port: int = 5002  # 5001 is the incumbent-QA-Tool
     flask_debug: bool = False
 
     # ---- Remediation policy ------------------------------------------------
@@ -520,7 +520,7 @@ class PipelineConfig:
     #
     # Structural-repair gating (see stage10_writeback/repair_gate.py) for the
     # font repairs that DO exist today:
-    #   "auto"      — apply all modifying repairs (default; differentiator vs PREP)
+    #   "auto"      — apply all modifying repairs (default; differentiator vs the incumbent)
     #   "confirm"   — apply only repairs whose finding_id is in repair_approval_file
     #   "flag-only" — never apply; only report them
     # Opt-in fixers for the currently detect-only axes (font embedding, colour

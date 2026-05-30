@@ -26,14 +26,14 @@ cell-drop fix + a Stage-6 fix that stopped valid tables being dropped to /Artifa
 a neutral cross-dataset shootout (PubTabNet + FinTabNet)
 proved the structure model was never the bottleneck; native cell-text-fill was.
 
-**Audit batch (14 real-world tagged PDFs, vs PREP and PDFix):**
+**Audit batch (14 real-world tagged PDFs, vs the incumbent and PDFix):**
 
-| validator | OURS | PREP | PDFix |
+| validator | OURS | the incumbent | PDFix |
 |---|---|---|---|
 | **veraPDF UA-1 compliant** | **9/14** | 6/14 | 9/14 |
 | **W3C ACT pass / fail / N/A** (8 rules × 14 docs) | **84 / 0 / 28** | 84 / **2** / 26 | 77 / **3** / 32 |
 
-We are the only one of the three with **zero** ACT-rule failures across the audit batch. PREP fails 1 heading-skip + 1 empty-heading; PDFix fails 3 empty-headings — all caught by our Stage-8 enforcers.
+We are the only one of the three with **zero** ACT-rule failures across the audit batch. the incumbent fails 1 heading-skip + 1 empty-heading; PDFix fails 3 empty-headings — all caught by our Stage-8 enforcers.
 
 ## 🛠️ Architecture
 
@@ -42,7 +42,7 @@ The pipeline processes documents in an immutable, declarative style where `PageE
 ```
 Stage 0  page_classifier      Native vs scanned vs mixed vs corrupt
                               (sparse-text-density override catches image-of-text
-                              docs where PREP injected a header-only text layer)
+                              docs where the incumbent injected a header-only text layer)
 Stage 1a native_extractor     pdfplumber char-level extraction (born-digital)
 Stage 1b scanned_extractor    RapidOCR (PP-OCRv4 ONNX) on scanned / mixed pages
 Stage 2   text_merger          chars → words → line elements
@@ -76,7 +76,7 @@ The whole pipeline is **CPU-only by default** and runs locally on M1, no MinerU 
 
 ## 🧪 Conformance audit module (`tagger/audit/`)
 
-A read-only checker layer that scores any tagged PDF (ours, PREP, PDFix, anything) against the eight rules our pipeline cares about:
+A read-only checker layer that scores any tagged PDF (ours, the incumbent, PDFix, anything) against the eight rules our pipeline cares about:
 
 ```
 ACT-6cfa84   /  WCAG 1.1.1   Figure has /Alt or /ActualText
@@ -113,7 +113,7 @@ Two different questions, two different answers — don't conflate them:
 2. **Scanned-PDF support** — RapidOCR (PP-OCRv4 ONNX) closes the one honest scope boundary of the CPU backend.
 3. **Borderless tables** — Docling TableFormer beats GPU's `0.429 → 0.581` on TEDS.
 4. **Figure alt-text** — SigLIP zero-shot buckets + McGraw-Hill templates with caption awareness.
-5. **PDF/UA-1 + ACT enforcement** — heading-hierarchy + structural enforcers prevent the failure modes PREP and PDFix exhibit.
+5. **PDF/UA-1 + ACT enforcement** — heading-hierarchy + structural enforcers prevent the failure modes the incumbent and PDFix exhibit.
 6. **PDF/UA-2 formula MathML** — `/Formula` elements carry MathML as a PDF 2.0 Associated File (`/AF` Supplement) + `/Alt`; LaTeX from the text layer by default, image→LaTeX (`TAGGER_FORMULA_RECOGNIZER=vlm`) optional. veraPDF UA-1 stays 106/106.
 7. **Conformance + correctness reporting** — Matterhorn IDs, cross-platform screen-reader linearizer, veraPDF CI gate, and an expert-benchmark correctness harness.
 8. **Local test suite** — 303 passing under `TAGGER_LAYOUT_BACKEND=cpu`, no MinerU spawned, in under 45 s.

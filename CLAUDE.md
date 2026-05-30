@@ -33,7 +33,7 @@ python analyze_qa_report.py
 # E4B/vLLM QA auditor (current) — deploy then drive with the prompt-v2 client
 /Users/rahulkhatri/Library/Python/3.9/bin/modal deploy tagger/qa/modal_gemma_vllm.py
 MODAL_URL=<endpoint> PDFS_DIR=<tagged-output-dir> PARALLEL=10 \
-  /Users/rahulkhatri/"PREP QA Tool"/venv/bin/python "/Users/rahulkhatri/PREP QA Tool/run_corpus_modal.py" [filter]
+  /Users/rahulkhatri/"QA Tool"/venv/bin/python "/Users/rahulkhatri/QA Tool/run_corpus_modal.py" [filter]
 
 # Benchmark substrate — checker (PDF-A-B, CPU/free, all 125 docs)
 PYTHONPATH=. python scratch/run_benchmark.py <benchmark_root> [--remediation-dir DIR]
@@ -71,7 +71,7 @@ TAGGER_LAYOUT_BACKEND=cpu pytest tests/test_stage5.py -v
 ```
 Stage 0   page_classifier      Native vs scanned vs mixed vs corrupt. The
                                sparse-text-density override catches image-of-text
-                               docs where a software (PREP) injected a header-only
+                               docs where a software (the incumbent) injected a header-only
                                text layer — they'd otherwise classify as NATIVE.
 Stage 1a  native_extractor     Character-level extraction via pdfplumber; assigns
                                p{N}_c{idx} IDs.
@@ -142,7 +142,7 @@ Stage 10  struct_tree_writer   Builds PDF struct tree (in READING order, not
 
 ### Conformance audit layer (`tagger/audit/`)
 
-Read-only checker — separate from the tagging pipeline. Reports per-rule pass / fail / N/A for the eight rules our pipeline cares about (`ACT-6cfa84`, `ACT-36b590`, `ACT-b40fd1`, `PDFUA-7.4.2`, `PDFUA-7.1-10`, `PDFUA-7.5.2`, `PDFUA-7.5.3`, `PDFUA-7.1-1`). Use this to compare our tagged output against PREP / PDFix / any other tool's tagged output deterministically.
+Read-only checker — separate from the tagging pipeline. Reports per-rule pass / fail / N/A for the eight rules our pipeline cares about (`ACT-6cfa84`, `ACT-36b590`, `ACT-b40fd1`, `PDFUA-7.4.2`, `PDFUA-7.1-10`, `PDFUA-7.5.2`, `PDFUA-7.5.3`, `PDFUA-7.1-1`). Use this to compare our tagged output against the incumbent / PDFix / any other tool's tagged output deterministically.
 
 Two reporting layers sit on top (no new checks, just re-express the same results):
 - `tagger/audit/matterhorn.py` — maps each rule to its **Matterhorn Protocol 1.1** failure-condition ID (e.g. `13-004` figure Alt, `14-003` heading skip, `11-001` Lang, `07-001` DisplayDocTitle) so output speaks PAC's language. `RULE_TO_MATTERHORN` must cover every act_rules rule (a test guards this).

@@ -13,7 +13,7 @@ for el in pipe_elements:
         mcid_map[str(mcid_counter)] = el
         mcid_counter += 1
 
-with open("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_modal/miramar_untagged_qa_report.json") as f:
+with open("/Users/rahulkhatri/QA Tool/scratch/qa_results_modal/miramar_untagged_qa_report.json") as f:
     qa = json.load(f)
 
 for page in qa.get("results", []):

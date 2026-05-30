@@ -20,7 +20,7 @@ app = modal.App("qa-runner-odl")
 @app.local_entrypoint()
 def main():
     OUT = Path("/Users/rahulkhatri/Tagger/output_odl")
-    RES = Path("/Users/rahulkhatri/PREP QA Tool/scratch/qa_results_odl")
+    RES = Path("/Users/rahulkhatri/QA Tool/scratch/qa_results_odl")
     RES.mkdir(parents=True, exist_ok=True)
 
     pdfs = [

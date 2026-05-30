@@ -538,7 +538,7 @@ def _xmp_packet(title: str) -> bytes:
 def _add_metadata_and_viewer_prefs(pdf, root, title: str) -> None:
     """Add an XMP /Metadata stream (7.1-8) and DisplayDocTitle=true (7.1-10).
 
-    Both are additive catalog entries the pipeline previously never wrote (PREP
+    Both are additive catalog entries the pipeline previously never wrote (the incumbent
     inputs already carried them, masking the gap). Also mirrors the title into
     /Info and dc:title so the title veraPDF expects to display is actually present.
     """
@@ -1179,7 +1179,7 @@ def tag_untagged_pdf(
             root["/Lang"] = String("en-US")
 
         # 7b. XMP /Metadata stream (7.1-8) + ViewerPreferences/DisplayDocTitle
-        #     (7.1-10). Additive catalog entries; PREP inputs already carried
+        #     (7.1-10). Additive catalog entries; the incumbent inputs already carried
         #     them, so the pipeline never added them — the clean corpus exposed it.
         info = pdf.trailer.get("/Info")
         existing_title = info.get("/Title") if isinstance(info, Dictionary) else None
@@ -1194,7 +1194,7 @@ def tag_untagged_pdf(
         # 9. Modifying font repairs (the ONLY gated surface): detect, then apply
         #    per repair_mode. All tagging above is additive and always runs; only
         #    these source-altering repairs (edit fonts/show strings) are gated, to
-        #    honour the PREP-safe posture. See repair_gate.py for the boundary test.
+        #    honour the the incumbent-safe posture. See repair_gate.py for the boundary test.
         findings = []
         findings += detect_cidsets(pdf)
         findings += detect_notdef_refs(pdf)

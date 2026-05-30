@@ -2,8 +2,8 @@
 
 Two layers:
   1. Pure gate control-flow on synthetic Findings (no PDF, always runs).
-  2. Detector + apply coherence on PREP PDFs as real defect fixtures (skipped if
-     the fixtures are absent). PREP's tagged outputs still carry the inherited
+  2. Detector + apply coherence on incumbent PDFs as real defect fixtures (skipped if
+     the fixtures are absent). the incumbent's tagged outputs still carry the inherited
      font defects, so they make ideal MinerU-free fixtures.
 """
 
@@ -196,19 +196,19 @@ def test_detect_unembedded_fonts_synthetic():
     assert f.status == "reported"
 
 
-# ------------------------------------------------- detectors on PREP fixtures ---
+# --- detectors on real font-defect fixtures (in-repo, neutral-named, CI-runnable) ---
 
-_PREP = Path("/Users/rahulkhatri/Downloads/pdf_tag_tool/PREP PDF & Reports/PREP PDFs")
-_OSTEO = _PREP / "Osteoarthritis.pdf"
-_MISSOURI = _PREP / "Missouri State Epidemiological Profile July 2018.pdf"
-_skip = pytest.mark.skipif(not _PREP.exists(), reason="PREP fixtures not present")
+_FX = Path(__file__).parent / "fixtures" / "font_defects"
+_OSTEO = _FX / "notdef_space.pdf"      # has .notdef + missing-space refs
+_MISSOURI = _FX / "cidset.pdf"          # has incomplete CIDSets
+_skip = pytest.mark.skipif(not _FX.exists(), reason="font-defect fixtures not present")
 
 
 @_skip
-def test_detect_cidsets_finds_missouri_defects():
+def test_detect_cidsets_finds_defects():
     with pikepdf.open(str(_MISSOURI)) as pdf:
         fs = detect_cidsets(pdf)
-    assert fs, "expected CIDSet findings on PREP Missouri"
+    assert fs, "expected CIDSet findings on the cidset fixture"
     assert all(f.clause == "7.21.4.2" and f.repair_type == MODIFYING for f in fs)
 
 
@@ -218,8 +218,8 @@ def test_detect_then_auto_apply_is_idempotent():
     with pikepdf.open(str(_OSTEO)) as pdf:
         nd = detect_notdef_refs(pdf)
         sp = detect_missing_space_refs(pdf)
-        assert nd, "expected .notdef findings on PREP Osteo"
-        assert sp, "expected missing-space findings on PREP Osteo"
+        assert nd, "expected .notdef findings on the incumbent Osteo"
+        assert sp, "expected missing-space findings on the incumbent Osteo"
         gate_and_apply(nd + sp, AUTO)
         assert detect_notdef_refs(pdf) == []
         assert detect_missing_space_refs(pdf) == []
