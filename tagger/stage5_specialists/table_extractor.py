@@ -127,14 +127,20 @@ def extract_table_native(
             # dp-bench borderless docs: beats both TATR and GPU on most (064 0.91, 117
             # 0.51, 116 0.63 vs GPU 0.46/0.46/0.23). No-op if docling/weights missing.
             if table is None:
-                if TABLE.engine == "slanet":
-                    # SLANet (ONNX image->HTML) — beat TableFormer on the dp-bench
-                    # TEDS A/B and rescues its 0.000 collapses. Falls through to
-                    # TableFormer then text if SLANet is unavailable / yields nothing.
+                if TABLE.engine == "tableformerv2":
+                    from tagger.stage5_specialists.tableformerv2_table_extractor import extract_table_tableformerv2
+                    v2 = extract_table_tableformerv2(pdf_path, page_num, region)
+                    if v2 is not None:
+                        return v2
+                elif TABLE.engine in ("slanet", "ppstructure", "unitable"):
+                    # rapid_table (ONNX/torch image->HTML) model family. SLANet
+                    # beat TableFormer on the dp-bench TEDS A/B and rescues its
+                    # 0.000 collapses. Falls through to TableFormer then text if
+                    # the model is unavailable / yields nothing.
                     from tagger.stage5_specialists.slanet_table_extractor import extract_table_slanet
-                    slanet_ts = extract_table_slanet(pdf_path, page_num, region)
-                    if slanet_ts is not None:
-                        return slanet_ts
+                    rt_ts = extract_table_slanet(pdf_path, page_num, region)
+                    if rt_ts is not None:
+                        return rt_ts
                 from tagger.stage5_specialists.docling_table_extractor import extract_table
                 docling_ts = extract_table(pdf_path, page_num, region, classification)
                 if docling_ts is not None:

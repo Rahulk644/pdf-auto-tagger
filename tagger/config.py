@@ -212,13 +212,16 @@ class TableConfig:
     #   "ppstructure" — PP-Structure EN via rapid_table (ONNX, comparable to SLANet).
     #   "unitable"    — UniTable via rapid_table (torch backend, ~480MB, more
     #                   accurate but heavier — load in its own process to avoid OOM).
-    # DEFAULT = tableformer. PP-Structure won the ISOLATED-crop TEDS-S bench
-    # (0.906 vs 0.839) but lost END-TO-END on the real pipeline (TableFormer
-    # 0.567 TEDS / 0.721 TEDS-S vs PP-Structure 0.552 / 0.717 over the 42 dp-bench
-    # table docs) — the mature TableFormer native-text-fill + cascade beat it
-    # once detection/markdown realities are included. Lesson: validate
-    # end-to-end, not on isolated crops. rapid_table engines (ppstructure/slanet/
-    # unitable) remain available via the flag for experimentation.
+    # DEFAULT = tableformer — it WON the END-TO-END comparison (42 dp-bench table
+    # docs, scored on pipeline output). The isolated-crop TEDS-S ranking inverted
+    # completely in-pipeline:
+    #   end-to-end TEDS / TEDS-S:  tableformer 0.567/0.721  slanet 0.560/0.723
+    #                              ppstructure 0.552/0.717  tableformerv2 0.529/0.698
+    #   (isolated TEDS-S was: ppstructure 0.906 > slanet 0.894 > tfv2 0.868 > tf 0.839)
+    # The mature TableFormer native-text-fill + cascade beats raw model quality.
+    # LESSON: validate engine swaps END-TO-END, never on isolated crops. The
+    # alternatives (ppstructure/slanet/unitable/tableformerv2) stay available via
+    # the flag for experimentation; none beats TableFormer in-pipeline.
     engine: str = field(default_factory=lambda: os.environ.get(
         "TAGGER_TABLE_ENGINE", "tableformer"))
 
