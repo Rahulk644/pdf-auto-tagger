@@ -72,9 +72,19 @@ def assign_heading_levels(elements: list[TaggedElement]) -> list[TaggedElement]:
 
     level_map: dict[tuple, PDFTag] = {}
     if structural:
-        for idx, key in enumerate(structural):
-            level_map[key] = _HEADING_TAGS[min(idx, SEMANTIC.max_heading_levels - 1)]
-        deepest = level_map[structural[-1]]
+        # 3a. CLUSTER the structural styles' font SIZES (1-D k-means, k<=4) so close
+        # sizes collapse into ONE level instead of each distinct (size,bold,color)
+        # tuple anchoring its own H-level. The old enumerate() gave 5 styles -> H1..H5,
+        # spreading a document's true 2-3 levels across too many tags inconsistently
+        # (arXiv scoreboard: level_rel 0.65 — same GT level mapped to H3 AND H5 within
+        # one doc). Clustering yields a stable, document-relative level for each size.
+        sizes = [k[0] for k in structural]
+        k = min(SEMANTIC.max_heading_levels, len(set(sizes)), 4)
+        size_to_rank = _kmeans_levels(sizes, k)  # size bucket -> 0-based level rank (0=largest)
+        for key in structural:
+            rank = size_to_rank[key[0]]
+            level_map[key] = _HEADING_TAGS[min(rank, SEMANTIC.max_heading_levels - 1)]
+        deepest = _HEADING_TAGS[min(max(size_to_rank.values()), SEMANTIC.max_heading_levels - 1)]
         # 4. Body-common heading styles fold into the deepest structural level
         for key in styles:
             level_map.setdefault(key, deepest)
@@ -102,6 +112,30 @@ def assign_heading_levels(elements: list[TaggedElement]) -> list[TaggedElement]:
         len(styles), len(structural), assigned_count, len(headings),
     )
     return elements
+
+
+def _kmeans_levels(sizes: list[float], k: int) -> dict[float, int]:
+    """1-D k-means over heading font sizes → {size_bucket: level_rank} where rank 0
+    is the largest cluster (H1). Collapses near-equal sizes into one level so the
+    hierarchy depth reflects real typographic tiers, not every minor size jitter.
+    Pure numpy (no sklearn); deterministic quantile init, Lloyd iteration."""
+    import numpy as np
+
+    uniq = sorted(set(sizes))
+    if k <= 1 or len(uniq) <= 1:
+        return {s: 0 for s in sizes}
+    a = np.asarray(uniq, dtype=float)
+    cent = np.quantile(a, np.linspace(0.0, 1.0, k))
+    for _ in range(30):
+        labels = np.argmin(np.abs(a[:, None] - cent[None, :]), axis=1)
+        new = np.array([a[labels == j].mean() if np.any(labels == j) else cent[j]
+                        for j in range(k)])
+        if np.allclose(new, cent):
+            break
+        cent = new
+    # rank clusters by centroid DESC (largest font = H1 = rank 0)
+    rank_of_cluster = {c: r for r, c in enumerate(np.argsort(-cent))}
+    return {float(v): rank_of_cluster[int(np.argmin(np.abs(cent - v)))] for v in uniq}
 
 
 def _bucket(size: float, tol: float) -> float:

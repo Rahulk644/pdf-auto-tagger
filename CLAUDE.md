@@ -101,7 +101,10 @@ Stage 4+5 content_router       Maps Stage 2 PageElements into Stage 3 regions;
                                specialist_data for the Stage-10 /AF.
 Stage 6   consistency_validator Rule engine; converts bad elements to Artifact.
 Stage 7   cross_page_merger    Merges elements split across page boundaries.
-Stage 8a  heading_ranker       H1–H6 assignment by font-tier rarity.
+Stage 8a  heading_ranker       H1–H6 by font-tier rarity, then 1-D k-means
+                               (k≤4) over the structural font sizes so near-equal
+                               sizes collapse into ONE level (was: one level per
+                               distinct style → over-deep, inconsistent hierarchy).
 Stage 8a' heading_hierarchy_enforcer  Deterministic PDF/UA-1 7.4.2 + WCAG
                                rules: no level skips (H1→H3 collapses to
                                H1→H2), first heading = H1, empty heading →

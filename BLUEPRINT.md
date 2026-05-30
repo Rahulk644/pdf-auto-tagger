@@ -26,7 +26,7 @@ It runs in two interchangeable layout backends, selected by `LAYOUT.backend` (en
                            TaggedElements
 6  Consistency validator   Rule engine, deterministic safety checks
 7  Cross-page merger       Splits/joins elements spanning page boundaries
-8a Heading ranker          H1–H6 from font-tier rarity
+8a Heading ranker          H1–H6 from font-tier rarity + 1-D k-means size clustering
 8a' Heading-hierarchy enforcer  PDF/UA-1 7.4.2 — no level skips, first heading
                            is H1, empty/punct-only → /Artifact
 8b TOC detector
