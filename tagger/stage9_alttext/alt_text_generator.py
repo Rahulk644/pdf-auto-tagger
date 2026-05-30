@@ -92,7 +92,7 @@ def generate_alt_text_siglip(
         return generate_alt_text_placeholders(elements, input_pdf)
 
     from tagger.stage9_alttext.siglip_figure_classifier import (
-        classify_figure, bucket_to_alt_text,
+        classify_figure, bucket_to_alt_text, figure_labels, _DATA_BEARING,
     )
 
     figures = [el for el in elements if el.pdf_tag == PDFTag.FIGURE and not el.alt_text]
@@ -132,7 +132,12 @@ def generate_alt_text_siglip(
                     remaining.append(el)
                     continue
                 bucket, conf = classify_figure(crop)
-                alt = bucket_to_alt_text(bucket, conf, has_caption=_has_caption(el))
+                # For data-bearing figures, OCR the crop for real labels (axis
+                # titles, legend terms) → concrete, value-safe alt text. Only
+                # these buckets pay the OCR cost.
+                labels = figure_labels(crop) if bucket in _DATA_BEARING else None
+                alt = bucket_to_alt_text(bucket, conf,
+                                         has_caption=_has_caption(el), labels=labels)
                 if alt is None:
                     # Decorative -> reclassify to /Artifact (no /Alt, screen readers skip)
                     el.pdf_tag = PDFTag.ARTIFACT

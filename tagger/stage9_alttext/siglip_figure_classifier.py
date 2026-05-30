@@ -96,8 +96,51 @@ def classify_figure(image) -> Tuple[str, float]:
         return ("other", 0.0)
 
 
+def figure_labels(image, max_labels: int = 4) -> list:
+    """OCR a figure crop and return short TEXT labels (axis titles, legend
+    terms) — deliberately NOT data values: pure-number / symbol-only tokens are
+    dropped so the alt text can name what is *labelled* without ever implying we
+    read the data points (the failure mode small VLMs hit). Reuses the scanned-
+    page RapidOCR singleton; returns [] on any failure (no new model load path).
+    """
+    if image is None:
+        return []
+    try:
+        from tagger.stage1_extraction import scanned_extractor as se
+        if not se._load_ocr():
+            return []
+        import numpy as np
+        res, _ = se._ocr(np.array(image))
+        if not res:
+            return []
+        seen, out = set(), []
+        for item in res:
+            txt = str(item[1]).strip()
+            if not (2 <= len(txt) <= 40):
+                continue
+            if not any(c.isalpha() for c in txt):  # drop pure numbers/symbols (no data values)
+                continue
+            key = txt.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(txt)
+            if len(out) >= max_labels:
+                break
+        return out
+    except Exception as e:
+        logger.debug("figure OCR failed: %s", e)
+        return []
+
+
+# Data-bearing buckets where OCR'd labels make the alt text concrete + honest.
+_DATA_BEARING = {"chart": "Chart", "diagram": "Diagram",
+                 "schematic": "Schematic", "map": "Map"}
+
+
 def bucket_to_alt_text(bucket: str, confidence: float = 1.0,
-                        has_caption: bool = False) -> Optional[str]:
+                       has_caption: bool = False,
+                       labels: Optional[list] = None) -> Optional[str]:
     """Apply McGraw-Hill guideline templates per bucket.
     Returns None for `decorative` (above threshold) -> caller reclassifies as
     ARTIFACT (PDF4 technique — screen readers must skip).
@@ -108,6 +151,15 @@ def bucket_to_alt_text(bucket: str, confidence: float = 1.0,
     Caption element next to the Figure. Bucket label alone is enough."""
     if bucket == "decorative" and confidence >= _DECORATIVE_THRESHOLD:
         return None
+    # Data-bearing figure WITH OCR'd labels: name what's labelled, but never
+    # claim data values (the small-VLM hallucination failure mode). Honest +
+    # concrete + screen-reader-useful, all on CPU with no generative model.
+    if bucket in _DATA_BEARING and labels:
+        joined = ", ".join(labels[:4])
+        alt = f"{_DATA_BEARING[bucket]}. Labelled: {joined}. Data values not detailed; see surrounding text."
+        if len(alt) > _MAX_ALT_LEN:
+            alt = alt[:_MAX_ALT_LEN - 3].rstrip() + "..."
+        return alt
     # Type-prefixed templates. The "Refer to long description" suffix on the
     # complex types signals to a downstream reviewer that the figure needs a
     # narrative description; when an in-PDF caption is present (Stage 8's caption
